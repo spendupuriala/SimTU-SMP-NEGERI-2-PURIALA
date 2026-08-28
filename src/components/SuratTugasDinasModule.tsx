@@ -1,0 +1,1458 @@
+import React, { useState, useEffect } from 'react';
+import {
+  PlaneTakeoff,
+  Plus,
+  Search,
+  Printer,
+  Edit2,
+  Trash2,
+  FileText,
+  Users,
+  CheckCircle2,
+  X,
+  MapPin,
+  Calendar,
+  Building,
+  Download,
+  Cloud,
+  ExternalLink,
+  RefreshCw,
+  Folder,
+  FileCheck,
+  Check,
+  Sparkles,
+  AlertCircle,
+  FileCode,
+  Tag,
+  BookOpen,
+} from 'lucide-react';
+import {
+  SuratTugasDinas,
+  PersonilTugas,
+  IdentitasSekolah,
+  GuruPTK,
+  KodeKlasifikasiSurat,
+} from '../types';
+import { DEFAULT_KODE_KLASIFIKASI } from '../services/googleSheets';
+import {
+  generateSuratTugasFullHtml,
+  downloadSuratTugasHtmlFile,
+  downloadSuratTugasDocFile,
+  SPTPrintMode,
+  formatTanggalIndonesia,
+  LOGO_KABUPATEN_KONAWE_BASE64,
+  LOGO_TUT_WURI_BASE64,
+  terbilangHari,
+} from '../utils/skTemplates';
+import {
+  findSuratTugasTemplateInDrive,
+  fetchSuratFolderFiles,
+  uploadSuratTugasDocumentToDrive,
+  GoogleDriveFile,
+} from '../services/googleDrive';
+
+interface SuratTugasDinasModuleProps {
+  tugasList: SuratTugasDinas[];
+  onAdd: (item: SuratTugasDinas) => void;
+  onUpdate: (item: SuratTugasDinas) => void;
+  onDelete: (id: string) => void;
+  identitasSekolah: IdentitasSekolah;
+  guruPTKList?: GuruPTK[];
+  googleUser?: any | null;
+  googleToken?: string | null;
+  isGoogleConnected?: boolean;
+  onConnectGoogle?: () => void;
+  kodeKlasifikasiList?: KodeKlasifikasiSurat[];
+}
+
+export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
+  tugasList,
+  onAdd,
+  onUpdate,
+  onDelete,
+  identitasSekolah,
+  guruPTKList = [],
+  googleUser,
+  googleToken,
+  isGoogleConnected = false,
+  onConnectGoogle,
+  kodeKlasifikasiList = DEFAULT_KODE_KLASIFIKASI,
+}) => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<SuratTugasDinas | null>(null);
+
+  // Print & Preview State
+  const [selectedForPrint, setSelectedForPrint] = useState<SuratTugasDinas | null>(null);
+  const [printMode, setPrintMode] = useState<SPTPrintMode>('spt_only');
+
+  // Google Drive Template State
+  const [isDriveTemplateModalOpen, setIsDriveTemplateModalOpen] = useState(false);
+  const [driveFiles, setDriveFiles] = useState<GoogleDriveFile[]>([]);
+  const [driveSuratTugasTemplate, setDriveSuratTugasTemplate] = useState<GoogleDriveFile | null>(null);
+  const [isLoadingDrive, setIsLoadingDrive] = useState(false);
+  const [isSavingToDrive, setIsSavingToDrive] = useState(false);
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
+
+  const nextNumber = String(tugasList.length + 1).padStart(3, '0');
+
+  const [formData, setFormData] = useState<Partial<SuratTugasDinas>>({
+    kodeKlasifikasi: '090',
+    noSuratTugas: `090/${nextNumber}/SMP.02/ST/VII/2026`,
+    noSPPD: `094/${nextNumber}/SPPD/SMP.02/VII/2026`,
+    dasarPenugasan: 'Kepentingan Dinas Operasional Sekolah dan Pembinaan Tugas Tenaga Kependidikan',
+    personil: [
+      {
+        nama: identitasSekolah.namaKepalaSekolah || 'ADRIS, S.Pd.,M.Si',
+        nip: identitasSekolah.nipKepalaSekolah || '19710110 199412 1 0012',
+        pangkatGol: identitasSekolah.pangkatKepsek || 'Pembina, IV/a',
+        jabatan: 'Kepala Sekolah',
+      },
+    ],
+    maksudTugas: 'Menghadiri Rapat Koordinasi Teknis Pembinaan Guru dan Tenaga Kependidikan',
+    tempatTujuan: 'Dinas Pendidikan dan Kebudayaan Kab. Konawe, Unaaha',
+    tanggalBerangkat: new Date().toISOString().split('T')[0],
+    tanggalKembali: new Date().toISOString().split('T')[0],
+    lamaHari: 1,
+    alatAngkut: 'Kendaraan Dinas',
+    bebanAnggaran: 'Dana BOS SMPN 2 Puriala',
+    status: 'Terbit',
+    tempatPenetapan: 'Unggulino',
+    tanggalSurat: new Date().toISOString().split('T')[0],
+    templateNama: 'Format Google Drive TATA USAHA/SURAT - Surat Tugas',
+    drivePath: 'TATA USAHA/SURAT',
+  });
+
+  // Check & Fetch Google Drive Surat Folder / Surat Tugas Template on mount or token change
+  useEffect(() => {
+    if (googleToken && isGoogleConnected) {
+      loadDriveTemplates();
+    }
+  }, [googleToken, isGoogleConnected]);
+
+  const loadDriveTemplates = async () => {
+    if (!googleToken) return;
+    setIsLoadingDrive(true);
+    try {
+      const [files, template] = await Promise.all([
+        fetchSuratFolderFiles(googleToken),
+        findSuratTugasTemplateInDrive(googleToken),
+      ]);
+      setDriveFiles(files);
+      if (template) {
+        setDriveSuratTugasTemplate(template);
+      }
+    } catch (err) {
+      console.warn('Error fetching Drive template for Surat Tugas:', err);
+    } finally {
+      setIsLoadingDrive(false);
+    }
+  };
+
+  const handleKodeKlasifikasiChange = (newKode: string) => {
+    const parts = (formData.noSuratTugas || '').split('/');
+    let updatedNoSurat = formData.noSuratTugas || '';
+    if (parts.length > 1) {
+      parts[0] = newKode;
+      updatedNoSurat = parts.join('/');
+    } else {
+      updatedNoSurat = `${newKode}/${nextNumber}/SMP.02/ST/VII/2026`;
+    }
+    setFormData({
+      ...formData,
+      kodeKlasifikasi: newKode,
+      noSuratTugas: updatedNoSurat,
+    });
+  };
+
+  const handleOpenAdd = () => {
+    const nextNum = String(tugasList.length + 1).padStart(3, '0');
+    setEditingItem(null);
+    setFormData({
+      kodeKlasifikasi: '090',
+      noSuratTugas: `090/${nextNum}/SMP.02/ST/VII/2026`,
+      noSPPD: `094/${nextNum}/SPPD/SMP.02/VII/2026`,
+      dasarPenugasan: 'Kepentingan Dinas Operasional Sekolah dan Pembinaan Tugas Tenaga Kependidikan',
+      personil: [
+        {
+          nama: identitasSekolah.namaKepalaSekolah || 'ADRIS, S.Pd.,M.Si',
+          nip: identitasSekolah.nipKepalaSekolah || '19710110 199412 1 0012',
+          pangkatGol: identitasSekolah.pangkatKepsek || 'Pembina, IV/a',
+          jabatan: 'Kepala Sekolah',
+        },
+      ],
+      maksudTugas: '',
+      tempatTujuan: 'Dinas Pendidikan dan Kebudayaan Kab. Konawe, Unaaha',
+      tanggalBerangkat: new Date().toISOString().split('T')[0],
+      tanggalKembali: new Date().toISOString().split('T')[0],
+      lamaHari: 1,
+      alatAngkut: 'Kendaraan Dinas',
+      bebanAnggaran: 'Dana BOS SMPN 2 Puriala',
+      status: 'Terbit',
+      tempatPenetapan: 'Unggulino',
+      tanggalSurat: new Date().toISOString().split('T')[0],
+      templateNama: 'Format Google Drive TATA USAHA/SURAT - Surat Tugas',
+      drivePath: 'TATA USAHA/SURAT',
+    });
+    setIsAddModalOpen(true);
+  };
+
+  const handleOpenEdit = (item: SuratTugasDinas) => {
+    setEditingItem(item);
+    setFormData({
+      ...item,
+      kodeKlasifikasi: item.kodeKlasifikasi || item.noSuratTugas?.split('/')[0] || '090',
+    });
+    setIsAddModalOpen(true);
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.maksudTugas || !formData.tempatTujuan) {
+      alert('Mohon lengkapi Maksud Tugas dan Tempat Tujuan penugasan dinas!');
+      return;
+    }
+
+    const selectedKode = formData.kodeKlasifikasi || formData.noSuratTugas?.split('/')[0] || '090';
+
+    if (editingItem) {
+      onUpdate({
+        ...editingItem,
+        ...formData,
+        kodeKlasifikasi: selectedKode,
+        templateNama: 'Format Google Drive TATA USAHA/SURAT - Surat Tugas',
+        drivePath: 'TATA USAHA/SURAT',
+      } as SuratTugasDinas);
+    } else {
+      const newItem: SuratTugasDinas = {
+        id: `ST-${Date.now()}`,
+        kodeKlasifikasi: selectedKode,
+        noSuratTugas: formData.noSuratTugas || `${selectedKode}/${nextNumber}/SMP.02/ST/VII/2026`,
+        noSPPD: formData.noSPPD || `094/${nextNumber}/SPPD/SMP.02/VII/2026`,
+        dasarPenugasan: formData.dasarPenugasan || 'Kepentingan Dinas Operasional Sekolah',
+        personil:
+          formData.personil && formData.personil.length > 0
+            ? formData.personil
+            : [
+                {
+                  nama: identitasSekolah.namaKepalaSekolah || 'ADRIS, S.Pd.,M.Si',
+                  nip: identitasSekolah.nipKepalaSekolah || '19710110 199412 1 0012',
+                  pangkatGol: identitasSekolah.pangkatKepsek || 'Pembina, IV/a',
+                  jabatan: 'Kepala Sekolah',
+                },
+              ],
+        maksudTugas: formData.maksudTugas || '',
+        tempatTujuan: formData.tempatTujuan || '',
+        tanggalBerangkat: formData.tanggalBerangkat || new Date().toISOString().split('T')[0],
+        tanggalKembali: formData.tanggalKembali || new Date().toISOString().split('T')[0],
+        lamaHari: Number(formData.lamaHari) || 1,
+        alatAngkut: formData.alatAngkut || 'Kendaraan Dinas',
+        bebanAnggaran: formData.bebanAnggaran || 'Dana BOS SMPN 2 Puriala',
+        status: (formData.status as any) || 'Terbit',
+        tempatPenetapan: formData.tempatPenetapan || 'Unggulino',
+        tanggalSurat: formData.tanggalSurat || formData.tanggalBerangkat || new Date().toISOString().split('T')[0],
+        templateNama: 'Format Google Drive TATA USAHA/SURAT - Surat Tugas',
+        drivePath: 'TATA USAHA/SURAT',
+        statusDrive: 'Lokal Saja',
+      };
+      onAdd(newItem);
+    }
+    setIsAddModalOpen(false);
+  };
+
+  const handleAddPersonil = () => {
+    const current = formData.personil || [];
+    setFormData({
+      ...formData,
+      personil: [
+        ...current,
+        {
+          nama: '',
+          nip: '-',
+          pangkatGol: 'Penata Muda, III/a',
+          jabatan: 'Guru Mata Pelajaran',
+        },
+      ],
+    });
+  };
+
+  const handleSelectPTKForPersonil = (index: number, ptkId: string) => {
+    const selectedPTK = guruPTKList.find((g) => g.id === ptkId);
+    if (!selectedPTK) return;
+
+    const current = [...(formData.personil || [])];
+    current[index] = {
+      nama: selectedPTK.nama,
+      nip: selectedPTK.nip || '-',
+      pangkatGol: selectedPTK.golongan || 'Penata Muda, III/a',
+      jabatan: selectedPTK.jabatan || 'Guru Mata Pelajaran',
+    };
+    setFormData({ ...formData, personil: current });
+  };
+
+  const handleRemovePersonil = (index: number) => {
+    const current = formData.personil || [];
+    setFormData({
+      ...formData,
+      personil: current.filter((_, idx) => idx !== index),
+    });
+  };
+
+  const handleUpdatePersonil = (index: number, field: keyof PersonilTugas, val: string) => {
+    const current = [...(formData.personil || [])];
+    current[index] = { ...current[index], [field]: val };
+    setFormData({ ...formData, personil: current });
+  };
+
+  // Upload SPT document directly into Google Drive folder TATA USAHA/SURAT
+  const handleSaveToDrive = async (tugas: SuratTugasDinas) => {
+    if (!googleToken) {
+      if (onConnectGoogle) onConnectGoogle();
+      return;
+    }
+
+    setIsSavingToDrive(true);
+    setSaveSuccessMsg(null);
+    try {
+      const htmlContent = generateSuratTugasFullHtml(tugas, identitasSekolah, printMode);
+      const safeNo = (tugas.noSuratTugas || 'Surat_Tugas').replace(/[/\\?%*:|"<>]/g, '_');
+      const fileName = `SPT_${safeNo}_${tugas.personil[0]?.nama.replace(/[^a-zA-Z0-9]/g, '_') || 'Dinas'}.html`;
+      const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+
+      const uploaded = await uploadSuratTugasDocumentToDrive(googleToken, blob, fileName, 'text/html');
+
+      const updatedTugas: SuratTugasDinas = {
+        ...tugas,
+        statusDrive: 'Tersimpan',
+        driveFileId: uploaded.id,
+        driveWebViewLink: uploaded.webViewLink,
+        drivePath: 'TATA USAHA/SURAT',
+        templateNama: 'Format Google Drive TATA USAHA/SURAT - Surat Tugas',
+      };
+
+      onUpdate(updatedTugas);
+      setSelectedForPrint(updatedTugas);
+      setSaveSuccessMsg(`Berhasil disimpan ke Google Drive: TATA USAHA/SURAT/${fileName}`);
+      loadDriveTemplates();
+    } catch (err: any) {
+      alert(`Gagal menyimpan ke Google Drive: ${err?.message || 'Terjadi kesalahan'}`);
+    } finally {
+      setIsSavingToDrive(false);
+    }
+  };
+
+  const handlePrintDocument = (tugas: SuratTugasDinas, mode: SPTPrintMode) => {
+    const html = generateSuratTugasFullHtml(tugas, identitasSekolah, mode);
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.open();
+      printWindow.document.write(html);
+      printWindow.document.close();
+      printWindow.focus();
+      setTimeout(() => {
+        printWindow.print();
+      }, 500);
+    } else {
+      window.print();
+    }
+  };
+
+  const filtered = tugasList.filter(
+    (t) =>
+      t.noSuratTugas.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      t.maksudTugas.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      t.tempatTujuan.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      t.personil.some((p) => p.nama.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
+
+  return (
+    <div className="space-y-5">
+      {/* Top Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <div className="text-xs text-slate-500 font-medium tracking-wide">
+            Administrasi Tata Usaha / <span className="text-slate-800 font-semibold">Surat Perintah Tugas (SPT)</span>
+          </div>
+          <h2 className="text-xl font-extrabold text-slate-900 tracking-wide uppercase mt-0.5 flex items-center gap-2">
+            <PlaneTakeoff className="w-5 h-5 text-sky-600" />
+            <span>SURAT PERINTAH TUGAS (SPT) & SPPD DINAS</span>
+          </h2>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {/* Drive Template Inspection Button */}
+          <button
+            onClick={() => setIsDriveTemplateModalOpen(true)}
+            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold py-2.5 px-3.5 rounded-lg shadow-sm transition flex items-center gap-1.5"
+            title="Kelola & Cek Format Surat Tugas di Google Drive Folder TATA USAHA/SURAT"
+          >
+            <Cloud className="w-4 h-4 text-emerald-600" />
+            <span>Format Drive: TATA USAHA/SURAT</span>
+            {driveSuratTugasTemplate && (
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            )}
+          </button>
+
+          <button
+            onClick={handleOpenAdd}
+            className="bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold py-2.5 px-4 rounded-lg shadow-sm transition flex items-center gap-2"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Buat Surat Perintah Tugas</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Google Drive Master Template Banner Indicator */}
+      <div className="bg-gradient-to-r from-sky-50 via-indigo-50 to-emerald-50 border border-sky-200 rounded-xl p-4 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-xl bg-sky-600 text-white flex items-center justify-center shadow-sm shrink-0">
+            <FileCheck className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="font-extrabold text-xs text-slate-900 uppercase">
+                Format Resmi Standar Google Drive (TATA USAHA/SURAT)
+              </h3>
+              <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                <Check className="w-3 h-3" /> Berkas Master: &quot;Surat Tugas&quot;
+              </span>
+            </div>
+            <p className="text-xs text-slate-600 mt-0.5">
+              Seluruh pencetakan SPT & SPPD menggunakan kop resmi ganda (Logo Kab. Konawe & Tut Wuri), dasar hukum dinas, tabel personil, rincian penugasan, dan pengesahan Kepala Sekolah.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          {isGoogleConnected ? (
+            <button
+              onClick={() => setIsDriveTemplateModalOpen(true)}
+              className="text-xs bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm transition"
+            >
+              <Folder className="w-3.5 h-3.5 text-amber-500" />
+              <span>Buka Berkas Drive</span>
+            </button>
+          ) : (
+            <button
+              onClick={onConnectGoogle}
+              className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm transition"
+            >
+              <Cloud className="w-3.5 h-3.5" />
+              <span>Hubungkan Drive</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Filter and Search */}
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
+        <div className="relative flex-1">
+          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Cari nomor SPT, nama personil yang ditugaskan, maksud kegiatan, atau tempat tujuan..."
+            className="w-full pl-9 pr-4 py-2 text-xs rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-500"
+          />
+        </div>
+      </div>
+
+      {/* Table of Duty Orders */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs text-slate-600">
+            <thead className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200 uppercase text-[11px]">
+              <tr>
+                <th className="py-3 px-3.5">No. SPT & SPPD</th>
+                <th className="py-3 px-3.5">Personil yang Ditugaskan</th>
+                <th className="py-3 px-3.5">Maksud Perjalanan Dinas</th>
+                <th className="py-3 px-3.5">Tujuan & Waktu</th>
+                <th className="py-3 px-3.5">Beban Anggaran</th>
+                <th className="py-3 px-3.5">Format & Drive</th>
+                <th className="py-3 px-3.5 text-center">Cetak & Aksi</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="text-center py-10 text-slate-400">
+                    <PlaneTakeoff className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                    Belum ada data Surat Perintah Tugas. Klik &quot;Buat Surat Perintah Tugas&quot; untuk menambahkan.
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((item) => (
+                  <tr key={item.id} className="hover:bg-slate-50 transition">
+                    <td className="py-3 px-3.5 font-mono">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-sky-800">{item.noSuratTugas}</span>
+                        <span className="text-[9px] bg-sky-100 text-sky-800 border border-sky-200 px-1.5 py-0.2 rounded font-semibold font-sans">
+                          Kode: {item.kodeKlasifikasi || item.noSuratTugas?.split('/')[0] || '090'}
+                        </span>
+                      </div>
+                      {item.noSPPD && (
+                        <div className="text-[10px] text-slate-500 font-mono mt-0.5">SPPD: {item.noSPPD}</div>
+                      )}
+                      <div className="text-[9px] text-emerald-700 font-sans flex items-center gap-1 mt-0.5">
+                        <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                        <span>Tersinkron ke Buku Agenda Surat Keluar</span>
+                      </div>
+                    </td>
+                    <td className="py-3 px-3.5">
+                      {item.personil.map((p, idx) => (
+                        <div key={idx} className="mb-1 last:mb-0">
+                          <span className="font-bold text-slate-900">{p.nama}</span>
+                          <div className="text-[10px] text-slate-500 font-mono">
+                            NIP. {p.nip || '-'} • {p.jabatan}
+                          </div>
+                        </div>
+                      ))}
+                    </td>
+                    <td className="py-3 px-3.5 max-w-xs">
+                      <div className="font-semibold text-slate-900 line-clamp-2">{item.maksudTugas}</div>
+                      <div className="text-[10px] text-slate-500 italic mt-0.5">Dasar: {item.dasarPenugasan}</div>
+                    </td>
+                    <td className="py-3 px-3.5">
+                      <div className="font-medium text-slate-800 flex items-center gap-1">
+                        <MapPin className="w-3 h-3 text-red-500 shrink-0" /> {item.tempatTujuan}
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">
+                        {formatTanggalIndonesia(item.tanggalBerangkat)} ({item.lamaHari} Hari)
+                      </div>
+                    </td>
+                    <td className="py-3 px-3.5 text-[11px] font-medium text-slate-700">
+                      {item.bebanAnggaran}
+                    </td>
+                    <td className="py-3 px-3.5 whitespace-nowrap">
+                      {item.driveWebViewLink ? (
+                        <a
+                          href={item.driveWebViewLink}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 font-bold text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1 transition"
+                        >
+                          <Cloud className="w-3 h-3 text-emerald-600" /> Tersimpan di Drive
+                        </a>
+                      ) : (
+                        <span className="bg-slate-100 text-slate-700 font-semibold text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                          <FileCheck className="w-3 h-3 text-sky-600" /> Format &quot;Surat Tugas&quot;
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-3 px-3.5 text-center whitespace-nowrap">
+                      <div className="flex items-center justify-center gap-1.5">
+                        {/* Cetak / Preview SPT Format Drive */}
+                        <button
+                          onClick={() => {
+                            setSelectedForPrint(item);
+                            setPrintMode('spt_only');
+                            setSaveSuccessMsg(null);
+                          }}
+                          className="bg-sky-600 hover:bg-sky-700 text-white px-2.5 py-1.5 rounded-md font-bold text-[11px] flex items-center gap-1 shadow-sm transition"
+                          title="Pratinjau & Cetak SPT Format Google Drive"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          <span>Cetak SPT</span>
+                        </button>
+
+                        {/* SPPD Mode */}
+                        <button
+                          onClick={() => {
+                            setSelectedForPrint(item);
+                            setPrintMode('sppd_only');
+                            setSaveSuccessMsg(null);
+                          }}
+                          className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2 py-1.5 rounded-md font-semibold text-[11px] flex items-center gap-1 transition"
+                          title="Cetak SPPD Resmi"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          <span>SPPD</span>
+                        </button>
+
+                        {/* Edit */}
+                        <button
+                          onClick={() => handleOpenEdit(item)}
+                          className="text-slate-600 hover:text-amber-600 p-1.5 rounded hover:bg-slate-100 transition"
+                          title="Edit Data"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+
+                        {/* Delete */}
+                        <button
+                          onClick={() => {
+                            if (confirm(`Hapus data surat tugas ${item.noSuratTugas}?`)) {
+                              onDelete(item.id);
+                            }
+                          }}
+                          className="text-slate-400 hover:text-red-600 p-1.5 rounded hover:bg-slate-100 transition"
+                          title="Hapus"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* MODAL: Input / Edit Surat Tugas */}
+      {isAddModalOpen && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto light-scrollbar">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-100 mb-4">
+              <h3 className="font-extrabold text-base text-slate-900 uppercase flex items-center gap-2">
+                <PlaneTakeoff className="w-5 h-5 text-sky-600" />
+                <span>{editingItem ? 'Edit Surat Perintah Tugas' : 'Buat Surat Tugas Dinas (Format Google Drive)'}</span>
+              </h3>
+              <button onClick={() => setIsAddModalOpen(false)} className="text-slate-400 hover:text-slate-700">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-3.5 text-xs">
+              {/* Kode Klasifikasi Selector - Synchronized with Surat Keluar */}
+              <div className="bg-sky-50/80 p-3 rounded-xl border border-sky-200 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-sky-950 font-bold text-[11px] flex items-center gap-1.5">
+                    <Tag className="w-3.5 h-3.5 text-sky-700" />
+                    <span>Kode Klasifikasi Surat (Tersinkron dengan Surat Keluar)</span>
+                  </label>
+                  <span className="text-[10px] text-sky-800 font-semibold bg-white/80 px-2 py-0.5 rounded-full border border-sky-300">
+                    {kodeKlasifikasiList.length} Kode Tersedia
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="sm:col-span-2">
+                    <select
+                      value={formData.kodeKlasifikasi || '090'}
+                      onChange={(e) => handleKodeKlasifikasiChange(e.target.value)}
+                      className="w-full border border-sky-300 rounded-lg p-2 bg-white font-medium text-slate-800 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                    >
+                      {kodeKlasifikasiList.map((k) => (
+                        <option key={k.kode} value={k.kode}>
+                          {k.kode} - {k.nama} {k.kategori ? `(${k.kategori})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <input
+                      type="text"
+                      placeholder="Kode Klasifikasi..."
+                      value={formData.kodeKlasifikasi || ''}
+                      onChange={(e) => handleKodeKlasifikasiChange(e.target.value)}
+                      className="w-full border border-sky-300 rounded-lg p-2 bg-white font-mono font-bold text-slate-900 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+                <div className="text-[10px] text-sky-700 flex items-center gap-1">
+                  <BookOpen className="w-3 h-3 text-sky-600 shrink-0" />
+                  <span>Kode otomatis mengubah format awalan nomor surat dan tersinkron ke Buku Agenda Surat Keluar (Sheet 2026).</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Nomor Surat Perintah Tugas (SPT)</label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.noSuratTugas}
+                    onChange={(e) => setFormData({ ...formData, noSuratTugas: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg p-2 font-mono focus:ring-2 focus:ring-sky-500 focus:outline-none font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Nomor SPPD</label>
+                  <input
+                    type="text"
+                    value={formData.noSPPD}
+                    onChange={(e) => setFormData({ ...formData, noSPPD: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg p-2 font-mono focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">Dasar Surat / Penugasan</label>
+                <input
+                  type="text"
+                  required
+                  value={formData.dasarPenugasan}
+                  onChange={(e) => setFormData({ ...formData, dasarPenugasan: e.target.value })}
+                  placeholder="Surat Kepala Dinas Pendidikan dan Kebudayaan Kab. Konawe No. 005/..."
+                  className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                />
+              </div>
+
+              {/* Personil Ditugaskan list with PTK Auto-Selector */}
+              <div className="border border-slate-200 rounded-xl p-3 bg-slate-50 space-y-2.5">
+                <div className="flex justify-between items-center">
+                  <span className="font-bold text-slate-800 uppercase text-[11px] flex items-center gap-1.5">
+                    <Users className="w-4 h-4 text-sky-600" />
+                    <span>Daftar Personil yang Ditugaskan ({formData.personil?.length || 0})</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleAddPersonil}
+                    className="text-xs bg-sky-600 text-white font-bold px-2.5 py-1 rounded hover:bg-sky-700 flex items-center gap-1 transition shadow-sm"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Tambah Personil
+                  </button>
+                </div>
+
+                {formData.personil?.map((p, idx) => (
+                  <div key={idx} className="bg-white p-3 rounded-lg border border-slate-200 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-800">Personil #{idx + 1}</span>
+                        {guruPTKList.length > 0 && (
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-slate-500 font-medium">Pilih dari PTK:</span>
+                            <select
+                              onChange={(e) => handleSelectPTKForPersonil(idx, e.target.value)}
+                              defaultValue=""
+                              className="text-[11px] border border-slate-300 rounded p-1 bg-slate-50 focus:ring-1 focus:ring-sky-500"
+                            >
+                              <option value="" disabled>
+                                -- Pilih Guru / Staf --
+                              </option>
+                              {guruPTKList.map((g) => (
+                                <option key={g.id} value={g.id}>
+                                  {g.nama} ({g.jabatan || 'Guru'})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                      </div>
+
+                      {formData.personil && formData.personil.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemovePersonil(idx)}
+                          className="text-red-500 hover:text-red-700 p-1"
+                          title="Hapus Personil"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        required
+                        placeholder="Nama Lengkap & Gelar"
+                        value={p.nama || ''}
+                        onChange={(e) => handleUpdatePersonil(idx, 'nama', e.target.value)}
+                        className="border border-slate-300 rounded p-1.5 font-semibold"
+                      />
+                      <input
+                        type="text"
+                        placeholder="NIP (Kosongkan jika bukan PNS)"
+                        value={p.nip || ''}
+                        onChange={(e) => handleUpdatePersonil(idx, 'nip', e.target.value)}
+                        className="border border-slate-300 rounded p-1.5 font-mono"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Pangkat / Golongan (misal: Penata, III/c)"
+                        value={p.pangkatGol || ''}
+                        onChange={(e) => handleUpdatePersonil(idx, 'pangkatGol', e.target.value)}
+                        className="border border-slate-300 rounded p-1.5"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Jabatan (misal: Guru Mata Pelajaran)"
+                        value={p.jabatan || ''}
+                        onChange={(e) => handleUpdatePersonil(idx, 'jabatan', e.target.value)}
+                        className="border border-slate-300 rounded p-1.5"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">Maksud Tugas / Kegiatan Dinas</label>
+                <textarea
+                  rows={2}
+                  required
+                  value={formData.maksudTugas || ''}
+                  onChange={(e) => setFormData({ ...formData, maksudTugas: e.target.value })}
+                  placeholder="Mengikuti Workshop Penguatan Literasi dan Numerasi Tingkat SMP se-Kabupaten Konawe..."
+                  className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Tempat Tujuan Pelaksanaan</label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.tempatTujuan || ''}
+                    onChange={(e) => setFormData({ ...formData, tempatTujuan: e.target.value })}
+                    placeholder="Aula Dinas Pendidikan dan Kebudayaan Kab. Konawe"
+                    className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Alat Angkutan yang Digunakan</label>
+                  <select
+                    value={formData.alatAngkut || 'Kendaraan Dinas'}
+                    onChange={(e) => setFormData({ ...formData, alatAngkut: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-sky-500 focus:outline-none font-semibold"
+                  >
+                    <option value="Kendaraan Dinas">Kendaraan Dinas</option>
+                    <option value="Kendaraan Umum">Kendaraan Umum</option>
+                    <option value="Sepeda Motor">Sepeda Motor</option>
+                    <option value="Pesawat Udara">Pesawat Udara</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Tgl Berangkat</label>
+                  <input
+                    type="date"
+                    required
+                    value={formData.tanggalBerangkat || ''}
+                    onChange={(e) => setFormData({ ...formData, tanggalBerangkat: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Tgl Kembali</label>
+                  <input
+                    type="date"
+                    required
+                    value={formData.tanggalKembali || ''}
+                    onChange={(e) => setFormData({ ...formData, tanggalKembali: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Lama Hari</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={formData.lamaHari ?? 1}
+                    onChange={(e) => setFormData({ ...formData, lamaHari: Number(e.target.value) })}
+                    className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-sky-500 focus:outline-none font-bold"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Tempat &amp; Tanggal Penetapan</label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <input
+                      type="text"
+                      placeholder="Unggulino"
+                      value={formData.tempatPenetapan || 'Unggulino'}
+                      onChange={(e) => setFormData({ ...formData, tempatPenetapan: e.target.value })}
+                      className="border border-slate-300 rounded p-1.5"
+                    />
+                    <input
+                      type="date"
+                      value={formData.tanggalSurat || formData.tanggalBerangkat || ''}
+                      onChange={(e) => setFormData({ ...formData, tanggalSurat: e.target.value })}
+                      className="border border-slate-300 rounded p-1.5"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Pembebanan Anggaran</label>
+                  <select
+                    value={formData.bebanAnggaran || 'Dana BOS SMPN 2 Puriala'}
+                    onChange={(e) => setFormData({ ...formData, bebanAnggaran: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-sky-500 focus:outline-none font-semibold text-slate-800"
+                  >
+                    <option value="Dana BOS SMPN 2 Puriala">Dana BOS SMPN 2 Puriala</option>
+                    <option value="APBD Kab. Konawe">APBD Kab. Konawe</option>
+                    <option value="Instansi Pengundang">Instansi Pengundang</option>
+                    <option value="Swadaya Pribadi">Swadaya Pribadi</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsAddModalOpen(false)}
+                  className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-100 font-semibold"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg font-bold shadow-md"
+                >
+                  {editingItem ? 'Simpan Perubahan' : 'Terbitkan SPT & SPPD'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Official Google Drive Template Preview & Print */}
+      {selectedForPrint && (
+        <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
+          <div className="bg-slate-100 rounded-2xl max-w-4xl w-full p-4 sm:p-6 shadow-2xl border border-slate-200 max-h-[94vh] overflow-y-auto light-scrollbar">
+            {/* Top Toolbar (No-Print) */}
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-300 mb-4 no-print bg-white p-3.5 rounded-xl shadow-sm">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-extrabold text-sm uppercase text-slate-900 flex items-center gap-1.5">
+                    <FileCheck className="w-4 h-4 text-emerald-600" />
+                    <span>SURAT PERINTAH TUGAS (SPT) RESMI</span>
+                  </h3>
+                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                    Format Master: Google Drive TATA USAHA/SURAT
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 font-mono mt-0.5">
+                  Nomor: {selectedForPrint.noSuratTugas}
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Print Mode Switch */}
+                <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200">
+                  <button
+                    onClick={() => setPrintMode('spt_only')}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-md transition ${
+                      printMode === 'spt_only'
+                        ? 'bg-sky-600 text-white shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    SPT Saja
+                  </button>
+                  <button
+                    onClick={() => setPrintMode('sppd_only')}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-md transition ${
+                      printMode === 'sppd_only'
+                        ? 'bg-sky-600 text-white shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    SPPD
+                  </button>
+                  <button
+                    onClick={() => setPrintMode('all')}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-md transition ${
+                      printMode === 'all'
+                        ? 'bg-sky-600 text-white shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    SPT + SPPD
+                  </button>
+                </div>
+
+                {/* Print Button */}
+                <button
+                  onClick={() => handlePrintDocument(selectedForPrint, printMode)}
+                  className="bg-sky-600 hover:bg-sky-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Cetak SPT</span>
+                </button>
+
+                {/* Download Word (.doc) */}
+                <button
+                  onClick={() => downloadSuratTugasDocFile(selectedForPrint, identitasSekolah, printMode)}
+                  className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition"
+                  title="Unduh Format Microsoft Word (.doc)"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Word (.doc)</span>
+                </button>
+
+                {/* Download HTML */}
+                <button
+                  onClick={() => downloadSuratTugasHtmlFile(selectedForPrint, identitasSekolah, printMode)}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition"
+                  title="Unduh Berkas HTML Standar"
+                >
+                  <FileCode className="w-3.5 h-3.5" />
+                  <span>HTML</span>
+                </button>
+
+                {/* Save to Google Drive */}
+                <button
+                  onClick={() => handleSaveToDrive(selectedForPrint)}
+                  disabled={isSavingToDrive}
+                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition"
+                >
+                  {isSavingToDrive ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Cloud className="w-3.5 h-3.5" />
+                  )}
+                  <span>Simpan ke Drive</span>
+                </button>
+
+                <button
+                  onClick={() => setSelectedForPrint(null)}
+                  className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {saveSuccessMsg && (
+              <div className="mb-4 bg-emerald-50 border border-emerald-300 text-emerald-800 px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Check className="w-4 h-4 text-emerald-600" />
+                  {saveSuccessMsg}
+                </span>
+                {selectedForPrint.driveWebViewLink && (
+                  <a
+                    href={selectedForPrint.driveWebViewLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline text-emerald-900 font-bold flex items-center gap-1"
+                  >
+                    <span>Buka di Drive</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
+              </div>
+            )}
+
+            {/* Document Frame / Canvas (Faithful to Google Drive TATA USAHA/SURAT "Surat Tugas") */}
+            <div className="bg-white p-8 sm:p-12 rounded-xl shadow-lg border border-slate-300 text-slate-900 font-serif max-w-3xl mx-auto leading-relaxed">
+              {/* Kop Surat Resmi Ganda */}
+              <div className="flex items-center justify-between border-b-2 border-black pb-2 mb-1">
+                <img
+                  src={LOGO_KABUPATEN_KONAWE_BASE64}
+                  alt="Logo Konawe"
+                  className="w-16 h-16 object-contain"
+                />
+                <div className="text-center flex-grow px-2">
+                  <p className="font-bold text-xs uppercase tracking-wider text-black m-0">
+                    PEMERINTAH KABUPATEN KONAWE
+                  </p>
+                  <p className="font-bold text-sm uppercase tracking-wider text-black m-0">
+                    DINAS PENDIDIKAN DAN KEBUDAYAAN
+                  </p>
+                  <h2 className="font-extrabold text-base uppercase tracking-wide text-black m-0 mt-0.5">
+                    {identitasSekolah.namaSekolah || 'SMP NEGERI 2 PURIALA'}
+                  </h2>
+                  <p className="text-[10px] text-slate-800 m-0 mt-0.5">
+                    {identitasSekolah.alamat || 'Jl. Poros Puriala - Motaha, Desa Unggulino, Kec. Puriala, Kab. Konawe 93354'}
+                  </p>
+                  <p className="text-[9.5px] italic text-slate-700 m-0">
+                    NPSN: {identitasSekolah.npsn || '40402500'} | Email: {identitasSekolah.email || 'spendupuriala@gmail.com'}
+                  </p>
+                </div>
+                <img
+                  src={LOGO_TUT_WURI_BASE64}
+                  alt="Logo Tut Wuri"
+                  className="w-16 h-16 object-contain"
+                />
+              </div>
+              <div className="border-b border-black mb-5"></div>
+
+              {printMode === 'spt_only' || printMode === 'all' ? (
+                <>
+                  {/* Judul & Nomor Surat */}
+                  <div className="text-center mb-5">
+                    <h3 className="font-bold text-sm uppercase underline tracking-wider text-black m-0">
+                      SURAT PERINTAH TUGAS
+                    </h3>
+                    <p className="font-bold text-xs mt-0.5 text-black">
+                      Nomor : {selectedForPrint.noSuratTugas}
+                    </p>
+                  </div>
+
+                  {/* Dasar */}
+                  <div className="grid grid-cols-[80px_10px_1fr] text-xs mb-3 text-black">
+                    <span className="font-bold">Dasar</span>
+                    <span>:</span>
+                    <span>{selectedForPrint.dasarPenugasan}</span>
+                  </div>
+
+                  {/* Memerintahkan */}
+                  <div className="text-center font-bold text-xs uppercase tracking-widest my-3 text-black">
+                    MEMERINTAHKAN :
+                  </div>
+
+                  {/* Kepada */}
+                  <div className="grid grid-cols-[80px_10px_1fr] text-xs mb-3 text-black">
+                    <span className="font-bold">Kepada</span>
+                    <span>:</span>
+                    <div>
+                      {selectedForPrint.personil.length > 1 ? (
+                        <table className="w-full border-collapse border border-slate-700 text-xs my-1">
+                          <thead>
+                            <tr className="bg-slate-100">
+                              <th className="border border-slate-700 p-1 w-8 text-center">No</th>
+                              <th className="border border-slate-700 p-1">Nama Lengkap &amp; NIP</th>
+                              <th className="border border-slate-700 p-1">Pangkat / Gol.</th>
+                              <th className="border border-slate-700 p-1">Jabatan / Unit Kerja</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selectedForPrint.personil.map((p, idx) => (
+                              <tr key={idx}>
+                                <td className="border border-slate-700 p-1 text-center font-bold">{idx + 1}.</td>
+                                <td className="border border-slate-700 p-1">
+                                  <div className="font-bold">{p.nama}</div>
+                                  <div className="text-[10px] font-mono">NIP. {p.nip || '-'}</div>
+                                </td>
+                                <td className="border border-slate-700 p-1">{p.pangkatGol || '-'}</td>
+                                <td className="border border-slate-700 p-1">{p.jabatan || 'Guru'} / SMPN 2 Puriala</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : (
+                        <div className="space-y-1">
+                          <div className="grid grid-cols-[110px_10px_1fr]">
+                            <span>1. Nama Lengkap</span>
+                            <span>:</span>
+                            <span className="font-bold">{selectedForPrint.personil[0]?.nama || '-'}</span>
+                          </div>
+                          <div className="grid grid-cols-[110px_10px_1fr]">
+                            <span>2. NIP</span>
+                            <span>:</span>
+                            <span className="font-mono">{selectedForPrint.personil[0]?.nip || '-'}</span>
+                          </div>
+                          <div className="grid grid-cols-[110px_10px_1fr]">
+                            <span>3. Pangkat / Gol.</span>
+                            <span>:</span>
+                            <span>{selectedForPrint.personil[0]?.pangkatGol || '-'}</span>
+                          </div>
+                          <div className="grid grid-cols-[110px_10px_1fr]">
+                            <span>4. Jabatan</span>
+                            <span>:</span>
+                            <span>{selectedForPrint.personil[0]?.jabatan || 'Kepala Sekolah'}</span>
+                          </div>
+                          <div className="grid grid-cols-[110px_10px_1fr]">
+                            <span>5. Unit Kerja</span>
+                            <span>:</span>
+                            <span>SMP Negeri 2 Puriala</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Untuk */}
+                  <div className="grid grid-cols-[80px_10px_1fr] text-xs mb-4 text-black">
+                    <span className="font-bold">Untuk</span>
+                    <span>:</span>
+                    <ol className="list-decimal pl-4 space-y-1.5 text-justify">
+                      <li>{selectedForPrint.maksudTugas}</li>
+                      <li>
+                        Tempat Pelaksanaan Tugas : <strong>{selectedForPrint.tempatTujuan}</strong>
+                      </li>
+                      <li>
+                        Lamanya Penugasan : <strong>{selectedForPrint.lamaHari} ({terbilangHari(selectedForPrint.lamaHari)}) hari</strong>, terhitung mulai tanggal <strong>{formatTanggalIndonesia(selectedForPrint.tanggalBerangkat)}</strong> sampai dengan <strong>{formatTanggalIndonesia(selectedForPrint.tanggalKembali)}</strong>.
+                      </li>
+                      <li>
+                        Alat angkutan yang digunakan : <strong>{selectedForPrint.alatAngkut || 'Kendaraan Dinas'}</strong>.
+                      </li>
+                      <li>
+                        Pembebanan Anggaran : Biaya penugasan dibebankan pada <strong>{selectedForPrint.bebanAnggaran || 'Dana BOS SMPN 2 Puriala'}</strong>.
+                      </li>
+                      <li>
+                        Setelah selesai melaksanakan tugas, agar segera membuat dan melaporkan hasil pelaksanaan tugas secara tertulis kepada Kepala Sekolah.
+                      </li>
+                      <li>
+                        Surat Perintah Tugas ini diberikan kepada yang bersangkutan untuk dilaksanakan dengan penuh rasa tanggung jawab dan dedikasi tinggi.
+                      </li>
+                    </ol>
+                  </div>
+
+                  {/* Tanda Tangan */}
+                  <div className="flex justify-end pt-4 text-xs text-black">
+                    <div className="text-center w-64">
+                      <p>Dikeluarkan di : {selectedForPrint.tempatPenetapan || 'Unggulino'}</p>
+                      <p>Pada tanggal : {formatTanggalIndonesia(selectedForPrint.tanggalSurat || selectedForPrint.tanggalBerangkat)}</p>
+                      <p className="font-bold mt-1">Kepala Sekolah,</p>
+                      <div className="h-16"></div>
+                      <p className="font-bold underline uppercase">
+                        {identitasSekolah.namaKepalaSekolah || 'ADRIS, S.Pd.,M.Si'}
+                      </p>
+                      <p>{identitasSekolah.pangkatKepsek || 'Pembina, IV/a'}</p>
+                      <p className="font-mono text-[11px]">NIP. {identitasSekolah.nipKepalaSekolah || '19710110 199412 1 0012'}</p>
+                    </div>
+                  </div>
+
+                  {/* Tembusan */}
+                  <div className="mt-4 pt-3 border-t border-slate-200 text-[10px] text-slate-700">
+                    <p className="font-bold underline mb-1">Tembusan disampaikan kepada Yth:</p>
+                    <ol className="list-decimal pl-4 space-y-0.5">
+                      <li>Kepala Dinas Pendidikan dan Kebudayaan Kabupaten Konawe di Unaaha;</li>
+                      <li>Pengawas Pembina SMP Dinas Dikbud Kabupaten Konawe;</li>
+                      <li>Yang bersangkutan untuk dilaksanakan;</li>
+                      <li>Arsip Sekolah.</li>
+                    </ol>
+                  </div>
+                </>
+              ) : null}
+
+              {printMode === 'sppd_only' ? (
+                <>
+                  <div className="flex justify-end text-[10px] mb-2">
+                    <table>
+                      <tbody>
+                        <tr><td>Lembar Ke</td><td>:</td><td>I / II</td></tr>
+                        <tr><td>Kode No.</td><td>:</td><td>094</td></tr>
+                        <tr><td>Nomor SPPD</td><td>:</td><td className="font-bold">{selectedForPrint.noSPPD || '-'}</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="text-center mb-4">
+                    <h3 className="font-bold text-sm uppercase underline text-black">SURAT PERINTAH PERJALANAN DINAS</h3>
+                    <p className="font-bold text-xs text-black">( S P P D )</p>
+                  </div>
+
+                  <table className="w-full border-collapse border border-slate-700 text-xs mb-4">
+                    <tbody>
+                      <tr>
+                        <td className="border border-slate-700 p-1.5 w-6 text-center font-bold">1.</td>
+                        <td className="border border-slate-700 p-1.5 w-52">Pejabat yang Memberi Perintah</td>
+                        <td className="border border-slate-700 p-1.5 font-bold">Kepala SMP Negeri 2 Puriala</td>
+                      </tr>
+                      <tr>
+                        <td className="border border-slate-700 p-1.5 text-center font-bold">2.</td>
+                        <td className="border border-slate-700 p-1.5">Nama Pegawai yang Diperintahkan</td>
+                        <td className="border border-slate-700 p-1.5 font-bold">
+                          {selectedForPrint.personil[0]?.nama || '-'}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border border-slate-700 p-1.5 text-center font-bold">3.</td>
+                        <td className="border border-slate-700 p-1.5">
+                          a. Pangkat dan Golongan<br />b. Jabatan / Instansi<br />c. Tingkat Biaya Perjalanan Dinas
+                        </td>
+                        <td className="border border-slate-700 p-1.5">
+                          a. {selectedForPrint.personil[0]?.pangkatGol || '-'}<br />
+                          b. {selectedForPrint.personil[0]?.jabatan || 'Guru'} / SMP Negeri 2 Puriala<br />
+                          c. Tingkat C (Standar Daerah)
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border border-slate-700 p-1.5 text-center font-bold">4.</td>
+                        <td className="border border-slate-700 p-1.5">Maksud Perjalanan Dinas</td>
+                        <td className="border border-slate-700 p-1.5">{selectedForPrint.maksudTugas}</td>
+                      </tr>
+                      <tr>
+                        <td className="border border-slate-700 p-1.5 text-center font-bold">5.</td>
+                        <td className="border border-slate-700 p-1.5">Alat Angkutan yang Digunakan</td>
+                        <td className="border border-slate-700 p-1.5">{selectedForPrint.alatAngkut}</td>
+                      </tr>
+                      <tr>
+                        <td className="border border-slate-700 p-1.5 text-center font-bold">6.</td>
+                        <td className="border border-slate-700 p-1.5">a. Tempat Berangkat<br />b. Tempat Tujuan</td>
+                        <td className="border border-slate-700 p-1.5">
+                          a. SMP Negeri 2 Puriala<br />
+                          b. <strong>{selectedForPrint.tempatTujuan}</strong>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border border-slate-700 p-1.5 text-center font-bold">7.</td>
+                        <td className="border border-slate-700 p-1.5">
+                          a. Lamanya Perjalanan Dinas<br />b. Tanggal Berangkat<br />c. Tanggal Harus Kembali
+                        </td>
+                        <td className="border border-slate-700 p-1.5">
+                          a. {selectedForPrint.lamaHari} Hari<br />
+                          b. {formatTanggalIndonesia(selectedForPrint.tanggalBerangkat)}<br />
+                          c. {formatTanggalIndonesia(selectedForPrint.tanggalKembali)}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border border-slate-700 p-1.5 text-center font-bold">8.</td>
+                        <td className="border border-slate-700 p-1.5">Pengikut / Personil Pendamping</td>
+                        <td className="border border-slate-700 p-1.5">
+                          {selectedForPrint.personil.length > 1 ? (
+                            <ol className="list-decimal pl-4">
+                              {selectedForPrint.personil.slice(1).map((p, idx) => (
+                                <li key={idx}><strong>{p.nama}</strong> ({p.jabatan || 'Guru'})</li>
+                              ))}
+                            </ol>
+                          ) : 'Tidak Ada (-)'}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border border-slate-700 p-1.5 text-center font-bold">9.</td>
+                        <td className="border border-slate-700 p-1.5">Pembebanan Anggaran</td>
+                        <td className="border border-slate-700 p-1.5 font-bold">{selectedForPrint.bebanAnggaran}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+
+                  <div className="flex justify-end pt-4 text-xs text-black">
+                    <div className="text-center w-64">
+                      <p>Dikeluarkan di : {selectedForPrint.tempatPenetapan || 'Unggulino'}</p>
+                      <p>Pada tanggal : {formatTanggalIndonesia(selectedForPrint.tanggalSurat || selectedForPrint.tanggalBerangkat)}</p>
+                      <p className="font-bold mt-1">Kepala Sekolah,</p>
+                      <div className="h-16"></div>
+                      <p className="font-bold underline uppercase">
+                        {identitasSekolah.namaKepalaSekolah || 'ADRIS, S.Pd.,M.Si'}
+                      </p>
+                      <p>{identitasSekolah.pangkatKepsek || 'Pembina, IV/a'}</p>
+                      <p className="font-mono text-[11px]">NIP. {identitasSekolah.nipKepalaSekolah || '19710110 199412 1 0012'}</p>
+                    </div>
+                  </div>
+                </>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Google Drive Folder TATA USAHA/SURAT Inspection */}
+      {isDriveTemplateModalOpen && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto light-scrollbar">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-100 mb-4">
+              <h3 className="font-extrabold text-sm uppercase text-slate-900 flex items-center gap-2">
+                <Folder className="w-5 h-5 text-amber-500" />
+                <span>Google Drive: Folder TATA USAHA / SURAT</span>
+              </h3>
+              <button onClick={() => setIsDriveTemplateModalOpen(false)} className="text-slate-400 hover:text-slate-700">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div className="bg-sky-50 border border-sky-200 rounded-xl p-3.5 text-slate-800 space-y-1.5">
+                <div className="font-bold text-sky-950 flex items-center gap-1.5 text-xs">
+                  <Sparkles className="w-4 h-4 text-sky-600" />
+                  <span>Struktur Folder &amp; Berkas Master</span>
+                </div>
+                <p className="text-slate-600">
+                  Folder target pada Google Drive akun sekolah:{' '}
+                  <code className="bg-white px-1.5 py-0.5 rounded text-sky-800 font-bold font-mono">
+                    TATA USAHA / SURAT
+                  </code>
+                  . Format penomoran dan butir perintah mengacu pada file{' '}
+                  <code className="bg-white px-1.5 py-0.5 rounded text-slate-900 font-bold font-mono">
+                    Surat Tugas
+                  </code>
+                  .
+                </p>
+              </div>
+
+              {/* Detected Template */}
+              <div className="border border-slate-200 rounded-xl p-3.5 bg-slate-50 space-y-2">
+                <div className="font-bold text-slate-800 flex items-center justify-between">
+                  <span>Status Berkas Master &quot;Surat Tugas&quot;:</span>
+                  <button
+                    onClick={loadDriveTemplates}
+                    disabled={isLoadingDrive}
+                    className="text-[11px] text-sky-600 hover:text-sky-800 font-semibold flex items-center gap-1"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isLoadingDrive ? 'animate-spin' : ''}`} />
+                    <span>Periksa Ulang</span>
+                  </button>
+                </div>
+
+                {driveSuratTugasTemplate ? (
+                  <div className="bg-white p-3 rounded-lg border border-emerald-200 flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <FileCheck className="w-5 h-5 text-emerald-600 shrink-0" />
+                      <div>
+                        <div className="font-bold text-slate-900">{driveSuratTugasTemplate.name}</div>
+                        <div className="text-[10px] text-slate-500 font-mono">
+                          Ukuran: {driveSuratTugasTemplate.size} • Diperbarui:{' '}
+                          {driveSuratTugasTemplate.modifiedTime
+                            ? new Date(driveSuratTugasTemplate.modifiedTime).toLocaleDateString('id-ID')
+                            : '-'}
+                        </div>
+                      </div>
+                    </div>
+                    {driveSuratTugasTemplate.webViewLink && (
+                      <a
+                        href={driveSuratTugasTemplate.webViewLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs bg-emerald-50 text-emerald-800 font-bold px-2.5 py-1 rounded hover:bg-emerald-100 flex items-center gap-1"
+                      >
+                        <span>Buka</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </div>
+                ) : (
+                  <div className="bg-white p-3 rounded-lg border border-slate-200 text-slate-600 text-center">
+                    <AlertCircle className="w-5 h-5 text-amber-500 mx-auto mb-1" />
+                    <span>
+                      {isGoogleConnected
+                        ? 'Format "Surat Tugas" aktif dan siap digunakan untuk pencetakan langsung maupun ekspor ke folder TATA USAHA/SURAT.'
+                        : 'Hubungkan Google Drive untuk sinkronisasi otomatis dengan folder TATA USAHA/SURAT.'}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* List of Files in TATA USAHA/SURAT */}
+              {isGoogleConnected && driveFiles.length > 0 && (
+                <div className="border border-slate-200 rounded-xl p-3.5 bg-slate-50 space-y-2">
+                  <div className="font-bold text-slate-800 text-[11px]">
+                    Daftar Berkas Terkini di Folder TATA USAHA / SURAT ({driveFiles.length})
+                  </div>
+                  <div className="max-h-40 overflow-y-auto space-y-1.5 light-scrollbar">
+                    {driveFiles.map((f) => (
+                      <div
+                        key={f.id}
+                        className="bg-white p-2 rounded border border-slate-200 flex items-center justify-between text-[11px]"
+                      >
+                        <div className="flex items-center gap-1.5 truncate">
+                          <FileText className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                          <span className="truncate font-medium">{f.name}</span>
+                        </div>
+                        {f.webViewLink && (
+                          <a
+                            href={f.webViewLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-sky-600 hover:text-sky-800 font-semibold shrink-0 ml-2"
+                          >
+                            Lihat
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsDriveTemplateModalOpen(false)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg font-bold"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

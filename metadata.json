@@ -1,0 +1,8 @@
+{
+  "name": "SimTU SMP NEGERI 2 PURIALA",
+  "description": "Sistem Informasi Persuratan dan Administrasi Sekolah Tata Usaha SMPN 2 Puriala lengkap dengan manajemen Surat Masuk/Keluar, SK, Kesiswaan, Kepegawaian PTK, dan Drive Explorer.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
