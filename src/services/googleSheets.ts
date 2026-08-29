@@ -823,7 +823,158 @@ function formatSheetDate(dateStr: string): string {
 }
 
 /**
- * Writes or appends Surat Masuk data back to Google Sheets
+ * Helper to write data rows to a Google Spreadsheet while 100% preserving existing templates,
+ * header styling, title banners, merged cells, custom column ordering, and formatting.
+ */
+export const writeTemplatePreservingDataToSheet = async (
+  accessToken: string,
+  spreadsheetId: string,
+  sheetName: string,
+  dataList: any[],
+  defaultHeaders: string[],
+  mapRecordToHeaders: (record: any, idx: number, headers: string[]) => (string | number)[]
+): Promise<void> => {
+  // 1. Ensure sheet exists
+  try {
+    const meta = await getSpreadsheetMetadata(accessToken, spreadsheetId);
+    if (!meta.sheetNames.includes(sheetName)) {
+      await fetch(`${SHEETS_API_URL}/${spreadsheetId}:batchUpdate`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          requests: [
+            {
+              addSheet: {
+                properties: {
+                  title: sheetName,
+                  gridProperties: { frozenRowCount: 1 },
+                },
+              },
+            },
+          ],
+        }),
+      });
+    }
+  } catch (e) {
+    console.warn(`Could not verify/add sheet tab "${sheetName}":`, e);
+  }
+
+  // 2. Read existing sheet content to detect template structure
+  let existingRows: string[][] = [];
+  try {
+    existingRows = await readSheetData(accessToken, spreadsheetId, sheetName);
+  } catch {
+    existingRows = [];
+  }
+
+  // 3. Case A: Brand new or completely empty sheet -> write default headers and data
+  if (!existingRows || existingRows.length === 0) {
+    const rows = [defaultHeaders, ...dataList.map((item, idx) => mapRecordToHeaders(item, idx, defaultHeaders))];
+    const writeRange = encodeURIComponent(`${sheetName}!A1`);
+    await fetch(`${SHEETS_API_URL}/${spreadsheetId}/values/${writeRange}?valueInputOption=USER_ENTERED`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        range: `${sheetName}!A1`,
+        majorDimension: 'ROWS',
+        values: rows,
+      }),
+    });
+    return;
+  }
+
+  // 4. Case B: Template already exists -> find header row without wiping title banners/styles
+  let headerRowIndex = 0;
+  let maxScore = 0;
+  const searchLimit = Math.min(existingRows.length, 12);
+
+  for (let i = 0; i < searchLimit; i++) {
+    const row = existingRows[i];
+    if (!row || row.length === 0) continue;
+    let score = 0;
+    row.forEach((c) => {
+      const cl = String(c || '').toLowerCase().trim();
+      if (!cl) return;
+      if (
+        cl.includes('no') ||
+        cl.includes('nama') ||
+        cl.includes('nip') ||
+        cl.includes('nuptk') ||
+        cl.includes('nis') ||
+        cl.includes('nisn') ||
+        cl.includes('jabatan') ||
+        cl.includes('perihal') ||
+        cl.includes('agenda') ||
+        cl.includes('kode') ||
+        cl.includes('tanggal') ||
+        cl.includes('alamat') ||
+        cl.includes('tujuan') ||
+        cl.includes('status')
+      ) {
+        score++;
+      }
+    });
+    if (score > maxScore) {
+      maxScore = score;
+      headerRowIndex = i;
+    }
+  }
+
+  const existingHeaders = (existingRows[headerRowIndex] || []).map((h) => String(h || '').trim());
+  const effectiveHeaders = existingHeaders.length > 0 && existingHeaders.some((h) => h.length > 0)
+    ? existingHeaders
+    : defaultHeaders;
+
+  // Map incoming data according to the exact header layout found in the template
+  const dataRows = dataList.map((item, idx) => mapRecordToHeaders(item, idx, effectiveHeaders));
+
+  // The first data row sits immediately after the header row (1-based sheet row number: headerRowIndex + 2)
+  const startRowNumber = headerRowIndex + 2;
+  const maxExistingRowNumber = Math.max(existingRows.length, startRowNumber + dataRows.length);
+
+  // Clear only data rows (leaving title and headers untouched)
+  if (maxExistingRowNumber >= startRowNumber) {
+    const clearRange = encodeURIComponent(`${sheetName}!A${startRowNumber}:Z${maxExistingRowNumber + 50}`);
+    await fetch(`${SHEETS_API_URL}/${spreadsheetId}/values/${clearRange}:clear`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+    }).catch((err) => console.warn('Non-blocking error clearing data rows:', err));
+  }
+
+  // Write new data starting at data row position
+  if (dataRows.length > 0) {
+    const writeRange = encodeURIComponent(`${sheetName}!A${startRowNumber}`);
+    const res = await fetch(`${SHEETS_API_URL}/${spreadsheetId}/values/${writeRange}?valueInputOption=USER_ENTERED`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        range: `${sheetName}!A${startRowNumber}`,
+        majorDimension: 'ROWS',
+        values: dataRows,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `Gagal menulis data ke spreadsheet "${sheetName}"`);
+    }
+  }
+};
+
+/**
+ * Writes or appends Surat Masuk data back to Google Sheets with template preservation
  */
 export const writeSuratMasukToSheet = async (
   accessToken: string,
@@ -831,7 +982,7 @@ export const writeSuratMasukToSheet = async (
   suratList: SuratMasuk[],
   sheetName: string = 'SURAT MASUK'
 ): Promise<void> => {
-  const headers = [
+  const defaultHeaders = [
     'No.',
     'No. Agenda',
     'Tanggal Terima',
@@ -847,46 +998,56 @@ export const writeSuratMasukToSheet = async (
     'Status Google Drive',
   ];
 
-  const rows = suratList.map((s, index) => [
-    index + 1,
-    s.noAgenda,
-    s.tanggalTerima,
-    s.noSurat,
-    s.tanggalSurat,
-    s.asalSurat,
-    s.perihal,
-    s.sifat,
-    s.kategori,
-    s.statusDisposisi,
-    (s.diteruskanKepada || []).join(', '),
-    s.instruksiDisposisi || s.catatanKepsek || '',
-    s.statusDrive || 'Tersimpan',
-  ]);
+  await writeTemplatePreservingDataToSheet(
+    accessToken,
+    spreadsheetId,
+    sheetName,
+    suratList,
+    defaultHeaders,
+    (s: SuratMasuk, index: number, headers: string[]) => {
+      const findIndex = (kws: string[]) =>
+        headers.findIndex((h) => kws.some((kw) => h.toLowerCase().includes(kw)));
 
-  const allValues = [headers, ...rows];
+      const cNo = findIndex(['no.', 'nomor urut', 'no']);
+      const cAgenda = findIndex(['no. agenda', 'no agenda', 'agenda', 'kode']);
+      const cTglTerima = findIndex(['tanggal terima', 'tgl terima', 'diterima']);
+      const cNoSurat = findIndex(['nomor surat', 'no surat', 'no. surat']);
+      const cTglSurat = findIndex(['tanggal surat', 'tgl surat', 'tgl. surat']);
+      const cAsal = findIndex(['asal surat', 'pengirim', 'dari', 'instansi']);
+      const cPerihal = findIndex(['perihal', 'isi ringkas', 'tentang', 'hal', 'uraian']);
+      const cSifat = findIndex(['sifat', 'klasifikasi']);
+      const cKategori = findIndex(['kategori', 'jenis']);
+      const cStatusDisp = findIndex(['status disposisi', 'disposisi']);
+      const cDiteruskan = findIndex(['diteruskan', 'tujuan disposisi']);
+      const cInstruksi = findIndex(['instruksi', 'catatan kepsek', 'catatan']);
+      const cDrive = findIndex(['status drive', 'drive', 'berkas']);
 
-  const range = `${sheetName}!A1:M${allValues.length}`;
+      const rowValues = new Array(headers.length).fill('');
+      
+      const setVal = (idx: number, fallbackIdx: number, val: any) => {
+        const target = idx >= 0 ? idx : (fallbackIdx < headers.length ? fallbackIdx : -1);
+        if (target >= 0 && target < headers.length) {
+          rowValues[target] = val !== undefined && val !== null ? val : '';
+        }
+      };
 
-  const response = await fetch(
-    `${SHEETS_API_URL}/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
-    {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        range,
-        majorDimension: 'ROWS',
-        values: allValues,
-      }),
+      setVal(cNo, 0, index + 1);
+      setVal(cAgenda, 1, s.noAgenda || `${index + 1}/SM/2026`);
+      setVal(cTglTerima, 2, s.tanggalTerima || '');
+      setVal(cNoSurat, 3, s.noSurat || '');
+      setVal(cTglSurat, 4, s.tanggalSurat || '');
+      setVal(cAsal, 5, s.asalSurat || '');
+      setVal(cPerihal, 6, s.perihal || '');
+      setVal(cSifat, 7, s.sifat || 'Biasa');
+      setVal(cKategori, 8, s.kategori || '-');
+      setVal(cStatusDisp, 9, s.statusDisposisi || 'Belum Disposisi');
+      setVal(cDiteruskan, 10, (s.diteruskanKepada || []).join(', '));
+      setVal(cInstruksi, 11, s.instruksiDisposisi || s.catatanKepsek || '');
+      setVal(cDrive, 12, s.statusDrive || 'Tersimpan');
+
+      return rowValues;
     }
   );
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err?.error?.message || 'Gagal menyimpan data ke Google Sheets');
-  }
 };
 
 /**
@@ -1236,7 +1397,7 @@ export const parseSuratKeluarFromRows = (rawRows: string[][]): ParsedSheetSuratK
 };
 
 /**
- * Writes or appends SuratKeluar rows to sheet '2026' in spreadsheet 'Nomor Surat'
+ * Writes or appends SuratKeluar rows to sheet '2026' in spreadsheet 'Nomor Surat' with template preservation
  */
 export const writeSuratKeluarToSheet = async (
   accessToken: string,
@@ -1244,35 +1405,6 @@ export const writeSuratKeluarToSheet = async (
   suratList: SuratKeluar[],
   sheetName: string = '2026'
 ): Promise<void> => {
-  // Ensure the sheet exists
-  try {
-    const meta = await getSpreadsheetMetadata(accessToken, spreadsheetId);
-    if (!meta.sheetNames.includes(sheetName)) {
-      // Add sheet
-      await fetch(`${SHEETS_API_URL}/${spreadsheetId}:batchUpdate`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          requests: [
-            {
-              addSheet: {
-                properties: {
-                  title: sheetName,
-                  gridProperties: { frozenRowCount: 1 },
-                },
-              },
-            },
-          ],
-        }),
-      });
-    }
-  } catch (e) {
-    console.warn('Could not verify/add sheet tab, proceeding with write:', e);
-  }
-
   const standardHeaders = [
     'No.',
     'No. Agenda',
@@ -1288,57 +1420,53 @@ export const writeSuratKeluarToSheet = async (
     'Status Verifikasi',
   ];
 
-  const rows: (string | number)[][] = [standardHeaders];
+  await writeTemplatePreservingDataToSheet(
+    accessToken,
+    spreadsheetId,
+    sheetName,
+    suratList,
+    standardHeaders,
+    (s: SuratKeluar, idx: number, headers: string[]) => {
+      const findIndex = (kws: string[]) =>
+        headers.findIndex((h) => kws.some((kw) => h.toLowerCase().includes(kw)));
 
-  suratList.forEach((s, idx) => {
-    rows.push([
-      idx + 1,
-      s.noAgenda || `${idx + 1}/SK/2026`,
-      s.kodeKlasifikasi || '421.3',
-      s.noSurat || '',
-      s.tanggalSurat || '',
-      s.tujuanSurat || '',
-      s.perihal || '',
-      s.sifat || 'Biasa',
-      s.lampiran || '-',
-      s.pengonsep || '',
-      s.penandatangan || '',
-      s.statusVerifikasi || 'Sudah Dikirim',
-    ]);
-  });
+      const cNo = findIndex(['no.', 'nomor urut', 'no']);
+      const cAgenda = findIndex(['no. agenda', 'no agenda', 'agenda']);
+      const cKode = findIndex(['kode klasifikasi', 'kode surat', 'kode']);
+      const cNoSurat = findIndex(['nomor surat', 'no surat', 'no. surat']);
+      const cTglSurat = findIndex(['tanggal surat', 'tgl surat', 'tgl. surat']);
+      const cTujuan = findIndex(['tujuan surat', 'dikirim kepada', 'tujuan', 'kepada']);
+      const cPerihal = findIndex(['perihal', 'isi ringkas', 'tentang', 'hal', 'uraian']);
+      const cSifat = findIndex(['sifat']);
+      const cLampiran = findIndex(['lampiran']);
+      const cPengonsep = findIndex(['pengonsep', 'konseptor']);
+      const cPenandatangan = findIndex(['penandatangan', 'kepala sekolah', 'ttd']);
+      const cStatus = findIndex(['status verifikasi', 'status']);
 
-  // Clear first
-  const range = encodeURIComponent(`${sheetName}!A1:Z500`);
-  await fetch(`${SHEETS_API_URL}/${spreadsheetId}/values/${range}:clear`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-  });
+      const rowValues = new Array(headers.length).fill('');
+      const setVal = (idx: number, fallbackIdx: number, val: any) => {
+        const target = idx >= 0 ? idx : (fallbackIdx < headers.length ? fallbackIdx : -1);
+        if (target >= 0 && target < headers.length) {
+          rowValues[target] = val !== undefined && val !== null ? val : '';
+        }
+      };
 
-  // Write new values
-  const writeRange = encodeURIComponent(`${sheetName}!A1`);
-  const response = await fetch(
-    `${SHEETS_API_URL}/${spreadsheetId}/values/${writeRange}?valueInputOption=USER_ENTERED`,
-    {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        range: `${sheetName}!A1`,
-        majorDimension: 'ROWS',
-        values: rows,
-      }),
+      setVal(cNo, 0, idx + 1);
+      setVal(cAgenda, 1, s.noAgenda || `${idx + 1}/SK/2026`);
+      setVal(cKode, 2, s.kodeKlasifikasi || '421.3');
+      setVal(cNoSurat, 3, s.noSurat || '');
+      setVal(cTglSurat, 4, s.tanggalSurat || '');
+      setVal(cTujuan, 5, s.tujuanSurat || '');
+      setVal(cPerihal, 6, s.perihal || '');
+      setVal(cSifat, 7, s.sifat || 'Biasa');
+      setVal(cLampiran, 8, s.lampiran || '-');
+      setVal(cPengonsep, 9, s.pengonsep || '');
+      setVal(cPenandatangan, 10, s.penandatangan || '');
+      setVal(cStatus, 11, s.statusVerifikasi || 'Sudah Dikirim');
+
+      return rowValues;
     }
   );
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err?.error?.message || 'Gagal menyimpan data ke sheet 2026');
-  }
 };
 
 /**
@@ -1595,7 +1723,7 @@ export const fetchKodeKlasifikasiFromSheet = async (
 };
 
 /**
- * Writes or initializes Kode Klasifikasi into sheet 'KODE NOMOR SURAT'
+ * Writes or initializes Kode Klasifikasi into sheet 'KODE NOMOR SURAT' with template preservation
  */
 export const writeKodeKlasifikasiToSheet = async (
   accessToken: string,
@@ -1603,73 +1731,39 @@ export const writeKodeKlasifikasiToSheet = async (
   list: KodeKlasifikasiSurat[],
   sheetName: string = 'KODE NOMOR SURAT'
 ): Promise<void> => {
-  // Ensure the sheet exists
-  try {
-    const meta = await getSpreadsheetMetadata(accessToken, spreadsheetId);
-    if (!meta.sheetNames.includes(sheetName)) {
-      await fetch(`${SHEETS_API_URL}/${spreadsheetId}:batchUpdate`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          requests: [
-            {
-              addSheet: {
-                properties: {
-                  title: sheetName,
-                  gridProperties: { frozenRowCount: 1 },
-                },
-              },
-            },
-          ],
-        }),
-      });
-    }
-  } catch (e) {
-    console.warn('Could not verify/add KODE NOMOR SURAT sheet tab:', e);
-  }
+  const defaultHeaders = ['No.', 'Kode Klasifikasi', 'Uraian / Jenis Surat', 'Keterangan / Contoh'];
 
-  const headers = ['No.', 'Kode Klasifikasi', 'Uraian / Jenis Surat', 'Keterangan / Contoh'];
-  const rows: (string | number)[][] = [headers];
+  await writeTemplatePreservingDataToSheet(
+    accessToken,
+    spreadsheetId,
+    sheetName,
+    list,
+    defaultHeaders,
+    (item: KodeKlasifikasiSurat, idx: number, headers: string[]) => {
+      const findIndex = (kws: string[]) =>
+        headers.findIndex((h) => kws.some((kw) => h.toLowerCase().includes(kw)));
 
-  list.forEach((item, idx) => {
-    rows.push([idx + 1, item.kode, item.nama, item.keterangan || '']);
-  });
+      const cNo = findIndex(['no.', 'nomor urut', 'no']);
+      const cKode = findIndex(['kode klasifikasi', 'kode surat', 'kode']);
+      const cNama = findIndex(['uraian', 'nama', 'jenis surat', 'perihal', 'tentang']);
+      const cKet = findIndex(['keterangan', 'contoh', 'catatan', 'ket']);
 
-  // Clear first
-  const range = encodeURIComponent(`${sheetName}!A1:Z200`);
-  await fetch(`${SHEETS_API_URL}/${spreadsheetId}/values/${range}:clear`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-  });
+      const rowValues = new Array(headers.length).fill('');
+      const setVal = (index: number, fallbackIdx: number, val: any) => {
+        const target = index >= 0 ? index : (fallbackIdx < headers.length ? fallbackIdx : -1);
+        if (target >= 0 && target < headers.length) {
+          rowValues[target] = val !== undefined && val !== null ? val : '';
+        }
+      };
 
-  // Write new values
-  const writeRange = encodeURIComponent(`${sheetName}!A1`);
-  const response = await fetch(
-    `${SHEETS_API_URL}/${spreadsheetId}/values/${writeRange}?valueInputOption=USER_ENTERED`,
-    {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        range: `${sheetName}!A1`,
-        majorDimension: 'ROWS',
-        values: rows,
-      }),
+      setVal(cNo, 0, idx + 1);
+      setVal(cKode, 1, item.kode);
+      setVal(cNama, 2, item.nama);
+      setVal(cKet, 3, item.keterangan || '');
+
+      return rowValues;
     }
   );
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err?.error?.message || 'Gagal menyimpan data ke sheet KODE NOMOR SURAT');
-  }
 };
 
 /**
@@ -2131,7 +2225,7 @@ export const parseAlumniFromRows = (rawRows: string[][]): { headers: string[]; a
 };
 
 /**
- * Writes Guru & PTK data to Google Sheet
+ * Writes Guru & PTK data to Google Sheet with template preservation
  */
 export const writeGuruPTKToSheet = async (
   accessToken: string,
@@ -2139,34 +2233,7 @@ export const writeGuruPTKToSheet = async (
   list: GuruPTK[],
   sheetName: string = 'DATA PTK'
 ): Promise<void> => {
-  try {
-    const meta = await getSpreadsheetMetadata(accessToken, spreadsheetId);
-    if (!meta.sheetNames.includes(sheetName)) {
-      await fetch(`${SHEETS_API_URL}/${spreadsheetId}:batchUpdate`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          requests: [
-            {
-              addSheet: {
-                properties: {
-                  title: sheetName,
-                  gridProperties: { frozenRowCount: 1 },
-                },
-              },
-            },
-          ],
-        }),
-      });
-    }
-  } catch (e) {
-    console.warn('Could not add PTK sheet tab:', e);
-  }
-
-  const headers = [
+  const defaultHeaders = [
     'No',
     'Nama Lengkap',
     'NIP',
@@ -2187,57 +2254,69 @@ export const writeGuruPTKToSheet = async (
     'Email',
   ];
 
-  const rows: (string | number)[][] = [headers];
+  await writeTemplatePreservingDataToSheet(
+    accessToken,
+    spreadsheetId,
+    sheetName,
+    list,
+    defaultHeaders,
+    (item: GuruPTK, idx: number, headers: string[]) => {
+      const findIndex = (kws: string[]) =>
+        headers.findIndex((h) => kws.some((kw) => h.toLowerCase().includes(kw)));
 
-  list.forEach((item, idx) => {
-    rows.push([
-      idx + 1,
-      item.namaLengkap,
-      item.nip || '-',
-      item.nuptk || '-',
-      item.jenisKelamin || 'Laki-laki',
-      item.tempatLahir || '-',
-      item.tanggalLahir || '-',
-      item.jabatan || '-',
-      item.jenisPTK || '-',
-      item.statusKepegawaian || 'PNS',
-      item.golongan || item.pangkatGolongan || '-',
-      item.mapelUtama || '-',
-      item.tmtPengangkatan || '-',
-      item.statusSertifikasi || 'Belum Sertifikasi',
-      item.pendidikanTerakhir || 'S1',
-      item.jurusan || '-',
-      item.noHp || '-',
-      item.email || '',
-    ]);
-  });
+      const cNo = findIndex(['no', 'no.', 'nomor urut']);
+      const cNama = findIndex(['nama lengkap', 'nama guru', 'nama ptk', 'nama pegawai', 'nama']);
+      const cNip = findIndex(['nip', 'n.i.p', 'nip/karpeg']);
+      const cNuptk = findIndex(['nuptk', 'n.u.p.t.k']);
+      const cJk = findIndex(['jenis kelamin', 'jk', 'l/p', 'gender', 'kelamin']);
+      const cTempat = findIndex(['tempat lahir', 'tmp lahir', 'tempat']);
+      const cTanggal = findIndex(['tanggal lahir', 'tgl lahir', 'tgl. lahir']);
+      const cJabatan = findIndex(['jabatan', 'tugas pokok', 'tugas', 'jabatan fungsional']);
+      const cJenisPTK = findIndex(['jenis ptk', 'jenis pegawai', 'kategori ptk', 'jenis tenaga']);
+      const cStatus = findIndex(['status kepegawaian', 'status pegawai', 'status ptk', 'status']);
+      const cGolongan = findIndex(['pangkat / golongan', 'pangkat/golongan', 'pangkat/gol', 'golongan', 'gol', 'pangkat', 'ruang']);
+      const cMapel = findIndex(['mata pelajaran', 'mapel utama', 'mapel', 'bidang studi', 'guru kelas']);
+      const cTmt = findIndex(['tmt pengangkatan', 'tmt cpns', 'tmt pns', 'tmt kerja', 'tmt']);
+      const cSertifikasi = findIndex(['status sertifikasi', 'sertifikasi', 'sertifikat pendidik', 'tpg']);
+      const cPendidikan = findIndex(['pendidikan terakhir', 'pendidikan', 'jenjang', 'ijazah', 'pend. terakhir']);
+      const cJurusan = findIndex(['jurusan', 'program studi', 'prodi']);
+      const cNoHp = findIndex(['no hp', 'no telp', 'no. hp', 'nomor hp', 'telepon', 'hp', 'whatsapp', 'wa']);
+      const cEmail = findIndex(['email', 'e-mail', 'surat elektronik']);
 
-  const range = encodeURIComponent(`${sheetName}!A1:Z500`);
-  await fetch(`${SHEETS_API_URL}/${spreadsheetId}/values/${range}:clear`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-  });
+      const rowValues = new Array(headers.length).fill('');
+      const setVal = (index: number, fallbackIdx: number, val: any) => {
+        const target = index >= 0 ? index : (fallbackIdx < headers.length ? fallbackIdx : -1);
+        if (target >= 0 && target < headers.length) {
+          rowValues[target] = val !== undefined && val !== null ? val : '';
+        }
+      };
 
-  const writeRange = encodeURIComponent(`${sheetName}!A1`);
-  await fetch(`${SHEETS_API_URL}/${spreadsheetId}/values/${writeRange}?valueInputOption=USER_ENTERED`, {
-    method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      range: `${sheetName}!A1`,
-      majorDimension: 'ROWS',
-      values: rows,
-    }),
-  });
+      setVal(cNo, 0, idx + 1);
+      setVal(cNama, 1, item.namaLengkap);
+      setVal(cNip, 2, item.nip || '-');
+      setVal(cNuptk, 3, item.nuptk || '-');
+      setVal(cJk, 4, item.jenisKelamin || 'Laki-laki');
+      setVal(cTempat, 5, item.tempatLahir || '-');
+      setVal(cTanggal, 6, item.tanggalLahir || '-');
+      setVal(cJabatan, 7, item.jabatan || '-');
+      setVal(cJenisPTK, 8, item.jenisPTK || '-');
+      setVal(cStatus, 9, item.statusKepegawaian || 'PNS');
+      setVal(cGolongan, 10, item.golongan || item.pangkatGolongan || '-');
+      setVal(cMapel, 11, item.mapelUtama || '-');
+      setVal(cTmt, 12, item.tmtPengangkatan || '-');
+      setVal(cSertifikasi, 13, item.statusSertifikasi || 'Belum Sertifikasi');
+      setVal(cPendidikan, 14, item.pendidikanTerakhir || 'S1');
+      setVal(cJurusan, 15, item.jurusan || '-');
+      setVal(cNoHp, 16, item.noHp || '-');
+      setVal(cEmail, 17, item.email || '');
+
+      return rowValues;
+    }
+  );
 };
 
 /**
- * Writes Siswa Buku Induk data to Google Sheet
+ * Writes Siswa Buku Induk data to Google Sheet with template preservation
  */
 export const writeSiswaToSheet = async (
   accessToken: string,
@@ -2245,34 +2324,7 @@ export const writeSiswaToSheet = async (
   list: Siswa[],
   sheetName: string = 'BUKU INDUK SISWA'
 ): Promise<void> => {
-  try {
-    const meta = await getSpreadsheetMetadata(accessToken, spreadsheetId);
-    if (!meta.sheetNames.includes(sheetName)) {
-      await fetch(`${SHEETS_API_URL}/${spreadsheetId}:batchUpdate`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          requests: [
-            {
-              addSheet: {
-                properties: {
-                  title: sheetName,
-                  gridProperties: { frozenRowCount: 1 },
-                },
-              },
-            },
-          ],
-        }),
-      });
-    }
-  } catch (e) {
-    console.warn('Could not add Siswa sheet tab:', e);
-  }
-
-  const headers = [
+  const defaultHeaders = [
     'No',
     'NIS',
     'NISN',
@@ -2292,52 +2344,136 @@ export const writeSiswaToSheet = async (
     'Tahun Masuk',
   ];
 
-  const rows: (string | number)[][] = [headers];
+  await writeTemplatePreservingDataToSheet(
+    accessToken,
+    spreadsheetId,
+    sheetName,
+    list,
+    defaultHeaders,
+    (item: Siswa, idx: number, headers: string[]) => {
+      const findIndex = (kws: string[]) =>
+        headers.findIndex((h) => kws.some((kw) => h.toLowerCase().includes(kw)));
 
-  list.forEach((item, idx) => {
-    rows.push([
-      idx + 1,
-      item.nis,
-      item.nisn,
-      item.namaLengkap,
-      item.jenisKelamin,
-      item.tempatLahir,
-      item.tanggalLahir,
-      item.kelas,
-      item.agama,
-      item.namaAyah,
-      item.pekerjaanAyah,
-      item.namaIbu,
-      item.pekerjaanIbu,
-      item.alamat,
-      item.noTelpOrtu || '-',
-      item.statusSiswa,
-      item.tahunMasuk,
-    ]);
-  });
+      const cNo = findIndex(['no', 'no.', 'nomor urut']);
+      const cNis = findIndex(['nis', 'no induk', 'n.i.s']);
+      const cNisn = findIndex(['nisn', 'n.i.s.n']);
+      const cNama = findIndex(['nama lengkap', 'nama siswa', 'nama']);
+      const cJk = findIndex(['jk', 'jenis kelamin', 'l/p', 'gender', 'kelamin']);
+      const cTempat = findIndex(['tempat lahir', 'tmp lahir', 'tempat']);
+      const cTanggal = findIndex(['tanggal lahir', 'tgl lahir', 'tgl. lahir']);
+      const cKelas = findIndex(['kelas', 'rombel', 'tingkat']);
+      const cAgama = findIndex(['agama']);
+      const cAyah = findIndex(['nama ayah', 'ayah']);
+      const cPekAyah = findIndex(['pekerjaan ayah', 'pek ayah']);
+      const cIbu = findIndex(['nama ibu', 'ibu']);
+      const cPekIbu = findIndex(['pekerjaan ibu', 'pek ibu']);
+      const cAlamat = findIndex(['alamat', 'tempat tinggal', 'domisili']);
+      const cTelp = findIndex(['no telp ortu', 'no hp', 'no telp', 'telepon', 'hp']);
+      const cStatus = findIndex(['status siswa', 'status']);
+      const cTahun = findIndex(['tahun masuk', 'thn masuk', 'angkatan']);
 
-  const range = encodeURIComponent(`${sheetName}!A1:Z1000`);
-  await fetch(`${SHEETS_API_URL}/${spreadsheetId}/values/${range}:clear`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-  });
+      const rowValues = new Array(headers.length).fill('');
+      const setVal = (index: number, fallbackIdx: number, val: any) => {
+        const target = index >= 0 ? index : (fallbackIdx < headers.length ? fallbackIdx : -1);
+        if (target >= 0 && target < headers.length) {
+          rowValues[target] = val !== undefined && val !== null ? val : '';
+        }
+      };
 
-  const writeRange = encodeURIComponent(`${sheetName}!A1`);
-  await fetch(`${SHEETS_API_URL}/${spreadsheetId}/values/${writeRange}?valueInputOption=USER_ENTERED`, {
-    method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      range: `${sheetName}!A1`,
-      majorDimension: 'ROWS',
-      values: rows,
-    }),
-  });
+      setVal(cNo, 0, idx + 1);
+      setVal(cNis, 1, item.nis);
+      setVal(cNisn, 2, item.nisn);
+      setVal(cNama, 3, item.namaLengkap);
+      setVal(cJk, 4, item.jenisKelamin);
+      setVal(cTempat, 5, item.tempatLahir);
+      setVal(cTanggal, 6, item.tanggalLahir);
+      setVal(cKelas, 7, item.kelas);
+      setVal(cAgama, 8, item.agama);
+      setVal(cAyah, 9, item.namaAyah);
+      setVal(cPekAyah, 10, item.pekerjaanAyah);
+      setVal(cIbu, 11, item.namaIbu);
+      setVal(cPekIbu, 12, item.pekerjaanIbu);
+      setVal(cAlamat, 13, item.alamat);
+      setVal(cTelp, 14, item.noTelpOrtu || '-');
+      setVal(cStatus, 15, item.statusSiswa);
+      setVal(cTahun, 16, item.tahunMasuk);
+
+      return rowValues;
+    }
+  );
+};
+
+/**
+ * Writes Alumni & Ijazah data to Google Sheet with template preservation
+ */
+export const writeAlumniToSheet = async (
+  accessToken: string,
+  spreadsheetId: string,
+  list: Alumni[],
+  sheetName: string = 'DATA ALUMNI'
+): Promise<void> => {
+  const defaultHeaders = [
+    'No',
+    'NISN',
+    'NIS',
+    'Nama Lengkap Alumni',
+    'Tahun Lulus',
+    'Nomor Seri Ijazah',
+    'Nomor SKL',
+    'Status Ijazah',
+    'Tanggal Pengambilan',
+    'Nama Penerima',
+    'Melanjutkan Ke',
+    'Keterangan',
+  ];
+
+  await writeTemplatePreservingDataToSheet(
+    accessToken,
+    spreadsheetId,
+    sheetName,
+    list,
+    defaultHeaders,
+    (item: Alumni, idx: number, headers: string[]) => {
+      const findIndex = (kws: string[]) =>
+        headers.findIndex((h) => kws.some((kw) => h.toLowerCase().includes(kw)));
+
+      const cNo = findIndex(['no', 'no.', 'nomor urut']);
+      const cNisn = findIndex(['nisn', 'n.i.s.n']);
+      const cNis = findIndex(['nis', 'n.i.s', 'no induk']);
+      const cNama = findIndex(['nama lengkap', 'nama alumni', 'nama siswa', 'nama']);
+      const cTahun = findIndex(['tahun lulus', 'thn lulus', 'tahun kelulusan', 'angkatan']);
+      const cIjazah = findIndex(['no ijazah', 'nomor seri ijazah', 'no. ijazah', 'no seri ijazah', 'ijazah']);
+      const cSkl = findIndex(['no skl', 'nomor skl', 'surat keterangan lulus']);
+      const cStatus = findIndex(['status ijazah', 'status', 'keterangan ijazah']);
+      const cTglAmbil = findIndex(['tgl ambil', 'tanggal pengambilan', 'tgl pengambilan']);
+      const cPenerima = findIndex(['nama penerima', 'penerima', 'diambil oleh']);
+      const cLanjut = findIndex(['melanjutkan ke', 'sekolah lanjutan', 'sma/smk']);
+      const cKet = findIndex(['keterangan', 'ket']);
+
+      const rowValues = new Array(headers.length).fill('');
+      const setVal = (index: number, fallbackIdx: number, val: any) => {
+        const target = index >= 0 ? index : (fallbackIdx < headers.length ? fallbackIdx : -1);
+        if (target >= 0 && target < headers.length) {
+          rowValues[target] = val !== undefined && val !== null ? val : '';
+        }
+      };
+
+      setVal(cNo, 0, idx + 1);
+      setVal(cNisn, 1, item.nisn);
+      setVal(cNis, 2, item.nis);
+      setVal(cNama, 3, item.namaLengkap);
+      setVal(cTahun, 4, item.tahunLulus);
+      setVal(cIjazah, 5, item.nomorSeriIjazah || item.noSeriIjazah || '-');
+      setVal(cSkl, 6, item.nomorSKL || item.noSKL || '-');
+      setVal(cStatus, 7, item.statusIjazah || 'Sudah Diambil');
+      setVal(cTglAmbil, 8, item.tanggalPengambilan || '');
+      setVal(cPenerima, 9, item.namaPenerima || item.namaLengkap);
+      setVal(cLanjut, 10, item.melanjutkanKe || '-');
+      setVal(cKet, 11, item.keterangan || '');
+
+      return rowValues;
+    }
+  );
 };
 
 

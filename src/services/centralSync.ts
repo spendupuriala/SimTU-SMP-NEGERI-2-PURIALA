@@ -551,27 +551,33 @@ export const runCentralSync = async (
       }
     }
 
-    // 3) PTK JSON check
+    // 3) PTK JSON check in 04_KEPEGAWAIAN_PTK
     if (!foundPTKSheet && subfolderMap['ptk']) {
       try {
-        const fileRes = await fetch(`${DRIVE_API_URL}/files?${new URLSearchParams({ q: `name = 'DATA_INDUK_PTK.json' and '${subfolderMap['ptk']}' in parents and trashed = false`, fields: 'files(id)' }).toString()}`, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
+        const fileRes = await fetch(
+          `${DRIVE_API_URL}/files?${new URLSearchParams({
+            q: `(name = 'Data Guru & PTK' or name = 'Data Guru & PTK.json' or name = 'DATA_INDUK_PTK.json') and '${subfolderMap['ptk']}' in parents and trashed = false`,
+            fields: 'files(id, name)',
+            orderBy: 'modifiedTime desc',
+          }).toString()}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
         if (fileRes.ok) {
           const fileData = await fileRes.json();
           if (fileData.files && fileData.files.length > 0) {
-            const contentRes = await fetch(`${DRIVE_API_URL}/files/${fileData.files[0].id}?alt=media`, {
+            const fileItem = fileData.files[0];
+            const contentRes = await fetch(`${DRIVE_API_URL}/files/${fileItem.id}?alt=media`, {
               headers: { Authorization: `Bearer ${accessToken}` },
             });
             if (contentRes.ok) {
               const parsed = await contentRes.json();
-              const items: GuruPTK[] = parsed.daftarPTK || parsed.data || [];
+              const items: GuruPTK[] = parsed.guruPTK || parsed.daftarPTK || parsed.data || (Array.isArray(parsed) ? parsed : []);
               const nonMock = items.filter((p) => !isMockPTK(p));
               if (nonMock.length > 0) {
                 workingState.guruPTK = nonMock;
                 moduleSources.guruPTK = {
                   pulled: nonMock.length,
-                  source: 'Google Drive (04_KEPEGAWAIAN_PTK)',
+                  source: `Google Drive (04_KEPEGAWAIAN_PTK / ${fileItem.name})`,
                 };
               }
             }
@@ -786,12 +792,14 @@ export const runCentralSync = async (
     const targetFolderSiswa = subfolderMap['siswa_alumni'] || tataUsahaFolderId;
 
     const ptkPayload = {
-      judul: 'DATA INDUK PENDIDIK DAN TENAGA KEPENDIDIKAN (PTK) SMPN 2 PURIALA',
+      judul: 'DATA GURU & TENAGA KEPENDIDIKAN (PTK) SMPN 2 PURIALA',
       diperbaruiPada: new Date().toISOString(),
       sumberData: moduleSources.guruPTK.source || 'Data Riil Terverifikasi',
       totalPTK: ptkCount,
+      guruPTK: workingState.guruPTK || [],
       daftarPTK: workingState.guruPTK || [],
     };
+    await uploadOrUpdateJsonFile(accessToken, 'Data Guru & PTK.json', ptkPayload, targetFolderPTK);
     await uploadOrUpdateJsonFile(accessToken, 'DATA_INDUK_PTK.json', ptkPayload, targetFolderPTK);
 
     const siswaPayload = {

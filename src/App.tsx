@@ -865,6 +865,15 @@ export default function App() {
                 onDelete={handleDeleteGuru}
                 onReorder={handleReorderGuru}
                 identitasSekolah={data.identitasSekolah}
+                googleUser={googleUser}
+                googleToken={googleToken}
+                isGoogleConnected={isGoogleConnected}
+                isGoogleLoading={isGoogleLoading}
+                onConnectGoogle={handleConnectGoogle}
+                onBatchUpdate={(newList) => {
+                  updateData({ ...data, guruPTK: newList });
+                  showToast(`Berhasil memperbarui ${newList.length} data Guru & PTK dari Google Drive!`, 'success');
+                }}
               />
             )}
 

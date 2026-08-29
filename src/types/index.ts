@@ -270,6 +270,11 @@ export interface PTK {
     ukuran: string;
     tanggalUnggah?: string;
     url?: string;
+    driveFileId?: string;
+    driveWebViewLink?: string;
+    folderId?: string;
+    folderName?: string;
+    mimeType?: string;
   }[];
 }
 

@@ -1,5 +1,6 @@
-import { DatabaseState } from '../types';
+import { DatabaseState, GuruPTK } from '../types';
 import { invalidateGoogleAuth } from './googleAuth';
+import { writeGuruPTKToSheet, parseGuruPTKFromRows } from './googleSheets';
 
 export interface GoogleDriveFile {
   id: string;
@@ -920,6 +921,493 @@ export const deleteGoogleDriveFile = async (
 };
 
 /**
+ * Cache for Kepegawaian PTK Folder ID
+ */
+let cachedPTKFolderId: string | null = null;
+
+/**
+ * Find or Create folder path: TATA USAHA -> 04_KEPEGAWAIAN_PTK
+ */
+export const findOrCreatePTKFolder = async (accessToken: string): Promise<string> => {
+  if (!accessToken) {
+    throw new Error('AUTH_EXPIRED: Token Google Drive kosong.');
+  }
+
+  if (cachedPTKFolderId) {
+    return cachedPTKFolderId;
+  }
+
+  try {
+    const tataUsahaFolderId = await findOrCreateTataUsahaFolder(accessToken, 'TATA USAHA');
+
+    let ptkFolderId: string | null = null;
+    const queryPTK = `(name = '04_KEPEGAWAIAN_PTK' or name = 'KEPEGAWAIAN_PTK' or name = '04_KEPEGAWAIAN' or name = 'KEPEGAWAIAN' or name = 'GURU_DAN_PTK') and '${tataUsahaFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const resPTK = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: queryPTK, fields: 'files(id, name)' }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    if (resPTK.status === 401) {
+      invalidateGoogleAuth();
+      throw new Error('AUTH_EXPIRED');
+    }
+
+    if (resPTK.ok) {
+      const dataPTK = await resPTK.json();
+      if (dataPTK.files && dataPTK.files.length > 0) {
+        ptkFolderId = dataPTK.files[0].id;
+      }
+    }
+
+    if (!ptkFolderId) {
+      ptkFolderId = await createGoogleDriveFolder(accessToken, '04_KEPEGAWAIAN_PTK', tataUsahaFolderId);
+    }
+
+    cachedPTKFolderId = ptkFolderId;
+    return ptkFolderId;
+  } catch (error: any) {
+    if (error?.message?.includes('AUTH_EXPIRED') || error?.message?.includes('invalid authentication credentials')) {
+      invalidateGoogleAuth();
+      throw error;
+    }
+    console.warn('Warning creating TATA USAHA/04_KEPEGAWAIAN_PTK folder:', error?.message || error);
+    return findOrCreateTataUsahaFolder(accessToken);
+  }
+};
+
+/**
+ * Format standard clean folder name for individual PTK
+ */
+export const formatGuruFolderName = (guru: { namaLengkap: string; nip?: string; nuptk?: string }): string => {
+  const cleanNama = (guru.namaLengkap || 'PTK').replace(/[\\/:*?"<>|]/g, '').trim();
+  let prefix = '';
+  if (guru.nip && guru.nip !== '-' && guru.nip.replace(/\D/g, '').length >= 6) {
+    prefix = guru.nip.trim();
+  } else if (guru.nuptk && guru.nuptk !== '-' && guru.nuptk.replace(/\D/g, '').length >= 6) {
+    prefix = `NUPTK-${guru.nuptk.trim()}`;
+  } else {
+    prefix = 'PTK';
+  }
+  return `${prefix} - ${cleanNama}`.slice(0, 100);
+};
+
+/**
+ * Find or Create a dedicated subfolder for an individual Teacher/PTK inside TATA USAHA/04_KEPEGAWAIAN_PTK
+ */
+export const findOrCreateGuruSubfolder = async (
+  accessToken: string,
+  guru: { namaLengkap: string; nip?: string; nuptk?: string; id?: string }
+): Promise<{ folderId: string; folderName: string }> => {
+  if (!accessToken) {
+    throw new Error('AUTH_EXPIRED: Token Google Drive kosong.');
+  }
+
+  const ptkParentFolderId = await findOrCreatePTKFolder(accessToken);
+  const targetFolderName = formatGuruFolderName(guru);
+  const cleanNama = (guru.namaLengkap || '').replace(/[\\/:*?"<>|]/g, '').toLowerCase().trim();
+  const cleanNip = (guru.nip || '').replace(/\D/g, '');
+
+  try {
+    // 1. Search for folder matching exact folder name or contains teacher name / nip
+    let query = `'${ptkParentFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const escapedTarget = targetFolderName.replace(/'/g, "\\'");
+    const specificQuery = `${query} and name = '${escapedTarget}'`;
+
+    const searchRes = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: specificQuery, fields: 'files(id, name)' }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    if (searchRes.status === 401) {
+      invalidateGoogleAuth();
+      throw new Error('AUTH_EXPIRED: Sesi Google Drive kedaluwarsa.');
+    }
+
+    if (searchRes.ok) {
+      const searchData = await searchRes.json();
+      if (searchData.files && searchData.files.length > 0) {
+        return { folderId: searchData.files[0].id, folderName: searchData.files[0].name };
+      }
+    }
+
+    // 2. Also check if any existing folder contains the teacher's name or NIP
+    const listRes = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: query, fields: 'files(id, name)', pageSize: '100' }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    if (listRes.ok) {
+      const listData = await listRes.json();
+      const match = (listData.files || []).find((f: any) => {
+        const fname = (f.name || '').toLowerCase();
+        if (cleanNip && cleanNip.length >= 8 && fname.includes(cleanNip)) return true;
+        if (cleanNama && cleanNama.length >= 4 && fname.includes(cleanNama)) return true;
+        return false;
+      });
+      if (match) {
+        return { folderId: match.id, folderName: match.name };
+      }
+    }
+
+    // 3. Not found, create new subfolder
+    const newFolderId = await createGoogleDriveFolder(accessToken, targetFolderName, ptkParentFolderId);
+    return { folderId: newFolderId, folderName: targetFolderName };
+  } catch (error: any) {
+    if (error?.message?.includes('AUTH_EXPIRED')) {
+      invalidateGoogleAuth();
+      throw error;
+    }
+    console.warn(`Warning creating subfolder for guru ${guru.namaLengkap}:`, error?.message || error);
+    return { folderId: ptkParentFolderId, folderName: '04_KEPEGAWAIAN_PTK' };
+  }
+};
+
+/**
+ * Upload a document (PDF or Image) to the dedicated individual teacher's folder in Google Drive
+ */
+export const uploadGuruBerkasToDrive = async (
+  accessToken: string,
+  guru: GuruPTK,
+  file: File | Blob,
+  fileName: string,
+  mimeType: string,
+  jenisBerkas: string
+): Promise<{
+  id: string;
+  namaFile: string;
+  jenisBerkas: string;
+  ukuran: string;
+  tanggalUnggah: string;
+  driveFileId: string;
+  driveWebViewLink: string;
+  folderId: string;
+  folderName: string;
+  mimeType: string;
+}> => {
+  if (!accessToken) {
+    throw new Error('AUTH_EXPIRED: Token Google Drive kosong.');
+  }
+
+  // 1. Get or create the individual teacher's folder in TATA USAHA/04_KEPEGAWAIAN_PTK
+  const { folderId, folderName } = await findOrCreateGuruSubfolder(accessToken, guru);
+
+  // 2. Upload file to that folder
+  const uploaded = await uploadFileToGoogleDrive(accessToken, file, fileName, mimeType, folderId);
+
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  return {
+    id: `berkas-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    namaFile: fileName,
+    jenisBerkas: jenisBerkas || 'Berkas Kepegawaian',
+    ukuran: uploaded.size || formatBytes(file.size),
+    tanggalUnggah: todayStr,
+    driveFileId: uploaded.id,
+    driveWebViewLink: uploaded.webViewLink || `https://drive.google.com/file/d/${uploaded.id}/view`,
+    folderId,
+    folderName,
+    mimeType,
+  };
+};
+
+/**
+ * Fetch all berkas digital files inside a teacher's folder in Google Drive
+ */
+export const fetchGuruBerkasFiles = async (
+  accessToken: string,
+  folderId: string
+): Promise<GoogleDriveFile[]> => {
+  if (!accessToken || !folderId) return [];
+  return listGoogleDriveFiles(accessToken, folderId);
+};
+
+/**
+ * Save & sync Data Guru & PTK into Google Drive folder TATA USAHA/04_KEPEGAWAIAN_PTK
+ * with exact file name "Data Guru & PTK" (both Google Sheets preserving templates & JSON)
+ */
+export const saveGuruPTKDataToDrive = async (
+  accessToken: string,
+  guruList: GuruPTK[]
+): Promise<{ success: boolean; fileId: string; fileName: string; folderId: string; lastUpdated: string }> => {
+  if (!accessToken) {
+    throw new Error('AUTH_EXPIRED: Token Google Drive kosong.');
+  }
+
+  const ptkFolderId = await findOrCreatePTKFolder(accessToken);
+  const nowFormatted = new Date().toISOString();
+
+  // 1. Check if a Google Spreadsheet named "Data Guru & PTK" or "DATA PTK" exists in the folder
+  const checkSheetQuery = `mimeType = 'application/vnd.google-apps.spreadsheet' and (name = 'Data Guru & PTK' or name = 'DATA PTK' or name = 'DATA GURU') and '${ptkFolderId}' in parents and trashed = false`;
+  try {
+    const sheetSearchRes = await fetch(`${DRIVE_API_URL}/files?${new URLSearchParams({ q: checkSheetQuery, fields: 'files(id, name)' }).toString()}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (sheetSearchRes.ok) {
+      const sheetData = await sheetSearchRes.json();
+      if (sheetData.files && sheetData.files.length > 0) {
+        const sheetId = sheetData.files[0].id;
+        // Non-destructive write: preserves template header styles, fonts, and borders
+        await writeGuruPTKToSheet(accessToken, sheetId, guruList, 'DATA PTK');
+      }
+    }
+  } catch (sheetErr) {
+    console.warn('Could not sync to Google Spreadsheet (non-fatal, continuing to JSON):', sheetErr);
+  }
+
+  // 2. Also save/update the exact JSON file in TATA USAHA/04_KEPEGAWAIAN_PTK
+  const fileName = 'Data Guru & PTK.json';
+  const payload = {
+    _title: 'DATA GURU & TENAGA KEPENDIDIKAN (PTK)',
+    _folder: 'TATA USAHA/04_KEPEGAWAIAN_PTK',
+    _fileName: 'Data Guru & PTK',
+    _lastSync: nowFormatted,
+    _totalPTK: guruList.length,
+    _school: 'SMP NEGERI 2 PURIALA',
+    guruPTK: guruList,
+  };
+
+  const jsonString = JSON.stringify(payload, null, 2);
+  const blob = new Blob([jsonString], { type: 'application/json' });
+
+  // Check if file exists in 04_KEPEGAWAIAN_PTK folder
+  const checkQuery = `(name = '${fileName}' or name = 'Data Guru & PTK' or name = 'DATA_INDUK_PTK.json') and '${ptkFolderId}' in parents and trashed = false`;
+  const checkParams = new URLSearchParams({ q: checkQuery, fields: 'files(id, name)' });
+
+  const searchRes = await fetch(`${DRIVE_API_URL}/files?${checkParams.toString()}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (searchRes.status === 401) {
+    invalidateGoogleAuth();
+    throw new Error('AUTH_EXPIRED: Token Google Drive kedaluwarsa.');
+  }
+
+  let existingFileId: string | null = null;
+  if (searchRes.ok) {
+    const searchData = await searchRes.json();
+    if (searchData.files && searchData.files.length > 0) {
+      existingFileId = searchData.files[0].id;
+    }
+  }
+
+  let finalFileId = existingFileId;
+  if (existingFileId) {
+    const updated = await updateFileInGoogleDrive(accessToken, existingFileId, blob, 'application/json');
+    if (!updated) {
+      const up = await uploadFileToGoogleDrive(accessToken, blob, fileName, 'application/json', ptkFolderId);
+      finalFileId = up.id;
+    }
+  } else {
+    const up = await uploadFileToGoogleDrive(accessToken, blob, fileName, 'application/json', ptkFolderId);
+    finalFileId = up.id;
+  }
+
+  return {
+    success: true,
+    fileId: finalFileId || '',
+    fileName: 'Data Guru & PTK',
+    folderId: ptkFolderId,
+    lastUpdated: nowFormatted,
+  };
+};
+
+/**
+ * Load Data Guru & PTK from Google Drive folder TATA USAHA/04_KEPEGAWAIAN_PTK
+ * Searches for "Data Guru & PTK" (JSON or Google Sheets / CSV)
+ */
+export const loadGuruPTKDataFromDrive = async (
+  accessToken: string
+): Promise<{ success: boolean; data: GuruPTK[]; sourceName: string; sourceFolder: string }> => {
+  if (!accessToken) {
+    throw new Error('AUTH_EXPIRED: Token Google Drive kosong.');
+  }
+
+  const ptkFolderId = await findOrCreatePTKFolder(accessToken);
+
+  // 1. Search inside 04_KEPEGAWAIAN_PTK folder first
+  const queryInFolder = `'${ptkFolderId}' in parents and trashed = false and (name contains 'Data Guru & PTK' or name contains 'DATA GURU' or name contains 'PTK' or name contains 'DATA_INDUK_PTK')`;
+  const resInFolder = await fetch(
+    `${DRIVE_API_URL}/files?${new URLSearchParams({
+      q: queryInFolder,
+      fields: 'files(id, name, mimeType, webViewLink)',
+      orderBy: 'modifiedTime desc',
+      pageSize: '20',
+    }).toString()}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+
+  if (resInFolder.status === 401) {
+    invalidateGoogleAuth();
+    throw new Error('AUTH_EXPIRED: Token Google Drive kedaluwarsa.');
+  }
+
+  let candidateFiles: any[] = [];
+  if (resInFolder.ok) {
+    candidateFiles = (await resInFolder.json()).files || [];
+  }
+
+  // 2. If nothing found in folder, search globally in Drive
+  if (candidateFiles.length === 0) {
+    const queryGlobal = `trashed = false and (name = 'Data Guru & PTK' or name = 'Data Guru & PTK.json' or name contains 'Data Guru & PTK')`;
+    const resGlobal = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({
+        q: queryGlobal,
+        fields: 'files(id, name, mimeType, webViewLink)',
+        orderBy: 'modifiedTime desc',
+        pageSize: '10',
+      }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (resGlobal.ok) {
+      candidateFiles = (await resGlobal.json()).files || [];
+    }
+  }
+
+  // Prioritize exact match "Data Guru & PTK" or "Data Guru & PTK.json"
+  candidateFiles.sort((a, b) => {
+    const aExact = a.name === 'Data Guru & PTK' || a.name === 'Data Guru & PTK.json' ? 1 : 0;
+    const bExact = b.name === 'Data Guru & PTK' || b.name === 'Data Guru & PTK.json' ? 1 : 0;
+    return bExact - aExact;
+  });
+
+  for (const file of candidateFiles) {
+    // A. If it's a JSON file
+    if (file.mimeType === 'application/json' || file.name.endsWith('.json')) {
+      try {
+        const fileContentRes = await fetch(`${DRIVE_API_URL}/files/${file.id}?alt=media`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (fileContentRes.ok) {
+          const parsed = await fileContentRes.json();
+          const list: GuruPTK[] = parsed.guruPTK || parsed.data || (Array.isArray(parsed) ? parsed : []);
+          if (Array.isArray(list) && list.length > 0) {
+            return {
+              success: true,
+              data: list,
+              sourceName: file.name,
+              sourceFolder: 'TATA USAHA/04_KEPEGAWAIAN_PTK',
+            };
+          }
+        }
+      } catch (e) {
+        console.warn(`Error reading json file ${file.name}:`, e);
+      }
+    }
+
+    // B. If it's a Google Spreadsheet
+    if (file.mimeType === 'application/vnd.google-apps.spreadsheet') {
+      try {
+        const sheetMetaRes = await fetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${file.id}?fields=sheets(properties(sheetId,title))`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        if (sheetMetaRes.ok) {
+          const metaData = await sheetMetaRes.json();
+          const sheets = (metaData.sheets || []).map((s: any) => s.properties?.title || '');
+          const targetSheet = sheets.find((t: string) => {
+            const tl = t.toLowerCase();
+            return (
+              tl.includes('ptk') ||
+              tl.includes('guru') ||
+              tl.includes('data guru') ||
+              tl.includes('kepegawaian') ||
+              tl.includes('pendidik')
+            );
+          }) || sheets[0];
+
+          if (targetSheet) {
+            const valuesRes = await fetch(
+              `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/${encodeURIComponent(targetSheet)}!A1:Z500`,
+              { headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+            if (valuesRes.ok) {
+              const valData = await valuesRes.json();
+              const rows: string[][] = valData.values || [];
+              if (rows.length >= 2) {
+                // Dynamic row parsing
+                const headerKeywords = ['nama', 'nip', 'nuptk', 'jabatan', 'golongan', 'pangkat', 'jenis'];
+                let headerRowIndex = 0;
+                let maxScore = 0;
+                for (let i = 0; i < Math.min(rows.length, 10); i++) {
+                  let score = 0;
+                  (rows[i] || []).forEach((c) => {
+                    const cl = String(c || '').toLowerCase();
+                    if (headerKeywords.some((kw) => cl.includes(kw))) score++;
+                  });
+                  if (score > maxScore) {
+                    maxScore = score;
+                    headerRowIndex = i;
+                  }
+                }
+
+                const headers = (rows[headerRowIndex] || []).map((h) => String(h || '').trim());
+                const dataRows = rows.slice(headerRowIndex + 1);
+
+                const findColIndex = (keywords: string[]) =>
+                  headers.findIndex((h) => keywords.some((kw) => (h || '').toLowerCase().includes(kw)));
+
+                const colNama = findColIndex(['nama lengkap', 'nama guru', 'nama']);
+                const colNip = findColIndex(['nip', 'n.i.p']);
+                const colNuptk = findColIndex(['nuptk', 'n.u.p.t.k']);
+                const colJabatan = findColIndex(['jabatan', 'tugas']);
+                const colJenisPTK = findColIndex(['jenis ptk', 'jenis']);
+                const colStatus = findColIndex(['status kepegawaian', 'status']);
+                const colGol = findColIndex(['golongan', 'pangkat', 'gol']);
+                const colPendidikan = findColIndex(['pendidikan', 'ijazah']);
+                const colJurusan = findColIndex(['jurusan', 'prodi']);
+                const colSertifikasi = findColIndex(['sertifikasi']);
+                const colNoHp = findColIndex(['no hp', 'telepon', 'kontak', 'wa']);
+                const colEmail = findColIndex(['email']);
+
+                const parsedList: GuruPTK[] = [];
+                dataRows.forEach((r, idx) => {
+                  const getV = (cIdx: number) => (cIdx >= 0 && cIdx < r.length && r[cIdx] ? String(r[cIdx]).trim() : '');
+                  const rawNama = getV(colNama);
+                  const rawNip = getV(colNip);
+                  const rawNuptk = getV(colNuptk);
+
+                  if (!rawNama && !rawNip && !rawNuptk) return;
+
+                  parsedList.push({
+                    id: `ptk-drive-${Date.now()}-${idx + 1}`,
+                    namaLengkap: rawNama || 'Guru / PTK',
+                    nip: rawNip || '-',
+                    nuptk: rawNuptk || '-',
+                    jabatan: getV(colJabatan) || 'Guru Mata Pelajaran',
+                    jenisPTK: getV(colJenisPTK) || 'Guru Mapel',
+                    statusKepegawaian: getV(colStatus) || 'PNS',
+                    golongan: getV(colGol) || '-',
+                    pendidikanTerakhir: getV(colPendidikan) || 'S1',
+                    jurusan: getV(colJurusan) || 'Pendidikan',
+                    statusSertifikasi: getV(colSertifikasi).toLowerCase().includes('sudah') ? 'Sudah Sertifikasi' : 'Belum Sertifikasi',
+                    noHp: getV(colNoHp) || '-',
+                    email: getV(colEmail) || '',
+                    berkasDigital: [],
+                  });
+                });
+
+                if (parsedList.length > 0) {
+                  return {
+                    success: true,
+                    data: parsedList,
+                    sourceName: `${file.name} (${targetSheet})`,
+                    sourceFolder: 'TATA USAHA/04_KEPEGAWAIAN_PTK',
+                  };
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn(`Error reading sheet file ${file.name}:`, e);
+      }
+    }
+  }
+
+  throw new Error('Tidak ditemukan berkas "Data Guru & PTK" di Google Drive folder TATA USAHA/04_KEPEGAWAIAN_PTK.');
+};
+
+/**
  * Helper to format byte sizes into readable string
  */
 function formatBytes(bytes: number, decimals: number = 2): string {
@@ -930,4 +1418,5 @@ function formatBytes(bytes: number, decimals: number = 2): string {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 }
+
 
