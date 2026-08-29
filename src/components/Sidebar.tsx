@@ -85,9 +85,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }`}
       >
         <div className="py-3 px-3 space-y-4">
-          {/* Mobile close button */}
-          <div className="flex md:hidden justify-between items-center px-3 pb-2 border-b border-slate-800 text-xs font-bold text-white uppercase">
-            <span>Menu Navigasi TU</span>
+          {/* Mobile close button & App Identity */}
+          <div className="flex md:hidden justify-between items-center px-2 pb-3 border-b border-slate-800">
+            <div className="flex items-center gap-2.5">
+              <img
+                src="/simtu-icon.png"
+                alt="SimTU Logo"
+                className="w-7 h-7 rounded-lg object-cover border border-white/20"
+                referrerPolicy="no-referrer"
+              />
+              <span className="text-xs font-black text-white tracking-wide">SimTU SMPN 2 PURIALA</span>
+            </div>
             <button onClick={handleClose} className="p-1 text-slate-400 hover:text-white">
               <X className="w-4 h-4" />
             </button>
