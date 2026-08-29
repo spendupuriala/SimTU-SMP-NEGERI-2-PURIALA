@@ -75,8 +75,18 @@ export const Header: React.FC<HeaderProps> = ({
           <Menu className="w-5 h-5" />
         </button>
 
-        <div className="bg-white/10 p-2 rounded-lg flex items-center justify-center text-blue-300 shadow-inner">
-          <Landmark className="w-5 h-5 md:w-6 md:h-6" />
+        <div className="relative w-9 h-9 md:w-10 md:h-10 rounded-xl overflow-hidden shadow-md border border-white/20 shrink-0 bg-white/10 flex items-center justify-center">
+          <img
+            src="/simtu-icon.png"
+            alt="SimTU SMP Negeri 2 Puriala Logo"
+            className="w-full h-full object-cover"
+            referrerPolicy="no-referrer"
+            onError={(e) => {
+              // fallback to icon if image fails
+              (e.target as HTMLElement).style.display = 'none';
+            }}
+          />
+          <Landmark className="w-5 h-5 text-blue-200 absolute -z-10" />
         </div>
 
         <div>

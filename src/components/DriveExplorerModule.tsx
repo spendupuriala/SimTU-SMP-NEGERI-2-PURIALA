@@ -28,6 +28,13 @@ import {
   AlertCircle,
   Database,
   Layers,
+  ArrowDownUp,
+  RefreshCw,
+  Check,
+  Loader2,
+  FileCheck2,
+  Workflow,
+  Cpu,
 } from 'lucide-react';
 import { DriveFolder, DriveFile, IdentitasSekolah, DatabaseState } from '../types';
 import {
@@ -41,6 +48,12 @@ import {
   findOrCreateAppRootFolder,
   findOrCreateTataUsahaFolder,
 } from '../services/googleDrive';
+import {
+  runCentralSync,
+  CentralSyncProgress,
+  CentralSyncReport,
+  INITIAL_SYNC_STEPS,
+} from '../services/centralSync';
 
 interface DriveExplorerModuleProps {
   folders: DriveFolder[];
@@ -56,6 +69,7 @@ interface DriveExplorerModuleProps {
   onConnectGoogle: () => void;
   onDisconnectGoogle: () => void;
   databaseState: DatabaseState;
+  onUpdateDatabase?: (updatedState: DatabaseState) => void;
 }
 
 export const DriveExplorerModule: React.FC<DriveExplorerModuleProps> = ({
@@ -71,6 +85,7 @@ export const DriveExplorerModule: React.FC<DriveExplorerModuleProps> = ({
   onConnectGoogle,
   onDisconnectGoogle,
   databaseState,
+  onUpdateDatabase,
 }) => {
   // Mode: 'google-drive' vs 'local-drive'
   const [driveMode, setDriveMode] = useState<'google-drive' | 'local-drive'>('google-drive');
@@ -87,6 +102,20 @@ export const DriveExplorerModule: React.FC<DriveExplorerModuleProps> = ({
   const [isBackupSuccess, setIsBackupSuccess] = useState(false);
   const [backupFileName, setBackupFileName] = useState('');
   const [isBackingUp, setIsBackingUp] = useState(false);
+
+  // Central Sync States (Pusat Sinkronisasi SimTU)
+  const [isCentralSyncModalOpen, setIsCentralSyncModalOpen] = useState(false);
+  const [isCentralSyncRunning, setIsCentralSyncRunning] = useState(false);
+  const [centralSyncProgress, setCentralSyncProgress] = useState<CentralSyncProgress>({
+    currentStep: 1,
+    totalSteps: INITIAL_SYNC_STEPS.length,
+    percent: 0,
+    currentStepTitle: INITIAL_SYNC_STEPS[0].title,
+    currentStepDetail: INITIAL_SYNC_STEPS[0].detail,
+    steps: INITIAL_SYNC_STEPS,
+  });
+  const [centralSyncReport, setCentralSyncReport] = useState<CentralSyncReport | null>(null);
+  const [centralSyncError, setCentralSyncError] = useState<string | null>(null);
 
   // Modals for Google Drive
   const [isNewGDriveFolderOpen, setIsNewGDriveFolderOpen] = useState(false);
@@ -186,6 +215,45 @@ export const DriveExplorerModule: React.FC<DriveExplorerModuleProps> = ({
       alert(`Gagal mengunggah ke Google Drive: ${err?.message}`);
     } finally {
       setIsUploadingGDrive(false);
+    }
+  };
+
+  // Central Synchronization Engine (Pusat Sinkronisasi SimTU)
+  const handleRunCentralSync = async () => {
+    if (!googleToken) {
+      onConnectGoogle();
+      return;
+    }
+
+    setIsCentralSyncModalOpen(true);
+    setIsCentralSyncRunning(true);
+    setCentralSyncError(null);
+    setCentralSyncReport(null);
+    setCentralSyncProgress({
+      currentStep: 1,
+      totalSteps: INITIAL_SYNC_STEPS.length,
+      percent: 5,
+      currentStepTitle: INITIAL_SYNC_STEPS[0].title,
+      currentStepDetail: INITIAL_SYNC_STEPS[0].detail,
+      steps: JSON.parse(JSON.stringify(INITIAL_SYNC_STEPS)),
+    });
+
+    try {
+      const result = await runCentralSync(googleToken, databaseState, (progress) => {
+        setCentralSyncProgress(progress);
+      });
+
+      setCentralSyncReport(result.report);
+      if (onUpdateDatabase) {
+        onUpdateDatabase(result.updatedData);
+      }
+      // Refresh current Google Drive directory listing
+      await fetchGDriveFiles(currentGDriveFolderId, gDriveSearch);
+    } catch (err: any) {
+      console.error('Central Sync failed:', err);
+      setCentralSyncError(err?.message || 'Gagal melaksanakan sinkronisasi pusat ke Google Drive');
+    } finally {
+      setIsCentralSyncRunning(false);
     }
   };
 
@@ -488,6 +556,84 @@ export const DriveExplorerModule: React.FC<DriveExplorerModuleProps> = ({
                     </button>
                   </div>
                 )}
+              </div>
+
+              {/* PUSAT SINKRONISASI SimTU HERO CARD */}
+              <div className="bg-gradient-to-r from-[#0f2444] via-[#1a3660] to-[#1e4078] rounded-2xl p-5 md:p-6 text-white shadow-xl border border-blue-700/50 relative overflow-hidden">
+                <div className="relative z-10 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-5">
+                  <div className="space-y-2.5 max-w-2xl">
+                    <div className="inline-flex items-center gap-2 bg-blue-500/20 text-blue-200 text-[11px] font-bold px-3 py-1 rounded-full border border-blue-400/30">
+                      <ArrowDownUp className="w-3.5 h-3.5 text-blue-300" />
+                      <span>Pusat Sinkronisasi Terpadu (Tarik & Kirim Data)</span>
+                    </div>
+                    <h3 className="text-xl md:text-2xl font-extrabold text-white tracking-tight flex items-center gap-2 flex-wrap">
+                      <span>Pusat Sinkronisasi SimTU Cloud</span>
+                      <span className="bg-emerald-500/30 text-emerald-300 text-xs font-bold px-2.5 py-0.5 rounded-full border border-emerald-400/40 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" /> 1-Klik Otomatis
+                      </span>
+                    </h3>
+                    <p className="text-xs md:text-sm text-blue-100/80 leading-relaxed">
+                      Sinkronkan (tarik dan kirim) semua modul yang terhubung ke Google Drive & Sheets secara serentak: Surat Masuk, Surat Keluar & Nomor Agenda, SK KBM, SK Tugas Tambahan, SPT Dinas, Pembuat Surat, Data PTK & Siswa, serta Cadangan Master Database.
+                    </p>
+
+                    {/* Integrated Module Badges */}
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px] font-semibold text-blue-200">
+                      <span className="bg-white/10 px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1">
+                        <FileText className="w-3 h-3 text-sky-300" /> Surat Masuk ({databaseState.suratMasuk?.length || 0})
+                      </span>
+                      <span className="bg-white/10 px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1">
+                        <FileText className="w-3 h-3 text-amber-300" /> Surat Keluar ({databaseState.suratKeluar?.length || 0})
+                      </span>
+                      <span className="bg-white/10 px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1">
+                        <FileSpreadsheet className="w-3 h-3 text-emerald-300" /> SK KBM ({databaseState.skKBM?.length || 0})
+                      </span>
+                      <span className="bg-white/10 px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1">
+                        <FileCheck2 className="w-3 h-3 text-indigo-300" /> SK Tambahan ({databaseState.skTugasTambahan?.length || 0})
+                      </span>
+                      <span className="bg-white/10 px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1">
+                        <Workflow className="w-3 h-3 text-teal-300" /> SPT & Pembuat Surat ({((databaseState.suratTugas?.length || 0) + (databaseState.pembuatSurat?.length || 0))})
+                      </span>
+                      <span className="bg-white/10 px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1">
+                        <Database className="w-3 h-3 text-purple-300" /> PTK & Siswa ({((databaseState.guruPTK?.length || 0) + (databaseState.siswa?.length || 0))})
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Main Trigger Button */}
+                  <div className="shrink-0 flex flex-col sm:flex-row lg:flex-col items-stretch gap-2.5 w-full lg:w-auto">
+                    <button
+                      onClick={handleRunCentralSync}
+                      disabled={isCentralSyncRunning || isGoogleLoading}
+                      className="bg-gradient-to-r from-emerald-500 via-emerald-600 to-teal-600 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-700 active:scale-95 text-white font-extrabold px-6 py-3.5 rounded-xl shadow-xl hover:shadow-emerald-500/25 text-sm flex items-center justify-center gap-2.5 transition border border-emerald-400/50 cursor-pointer"
+                      title="Sinkronkan seluruh modul persuratan dan administrasi ke Google Drive & Sheets sekaligus"
+                    >
+                      {isCentralSyncRunning ? (
+                        <>
+                          <RotateCw className="w-5 h-5 animate-spin text-white" />
+                          <span>Sedang Menyinkronkan Semua...</span>
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="w-5 h-5 text-white animate-pulse" />
+                          <span>SINKRONKAN SEMUA DATA SEKARANG</span>
+                        </>
+                      )}
+                    </button>
+
+                    <div className="flex items-center justify-between text-[11px] text-blue-200/90 px-1">
+                      <span className="flex items-center gap-1">
+                        <Folder className="w-3.5 h-3.5 text-amber-300 fill-amber-400/30" />
+                        <span>Folder: TATA USAHA</span>
+                      </span>
+                      <button
+                        onClick={handleJumpToTataUsahaFolder}
+                        className="text-emerald-300 hover:text-emerald-200 font-bold underline"
+                      >
+                        Buka Folder
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* Action Toolbar */}
@@ -1127,6 +1273,274 @@ export const DriveExplorerModule: React.FC<DriveExplorerModuleProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 6. MODAL UTAMA: PUSAT SINKRONISASI SimTU (PROGRESS & REPORT) */}
+      {isCentralSyncModalOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-[#0f2444] via-[#1a3660] to-[#1e4078] p-5 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-blue-500/20 rounded-xl border border-blue-400/30">
+                  <ArrowDownUp className="w-5 h-5 text-blue-300" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-white flex items-center gap-2">
+                    <span>Pusat Sinkronisasi SimTU Cloud</span>
+                    {isCentralSyncRunning && (
+                      <span className="bg-amber-400 text-slate-900 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 animate-pulse">
+                        <RotateCw className="w-3 h-3 animate-spin" /> Proses
+                      </span>
+                    )}
+                    {centralSyncReport && (
+                      <span className="bg-emerald-400 text-slate-950 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <Check className="w-3 h-3" /> Berhasil
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-xs text-blue-100/80">
+                    Sinkronisasi Tarik & Kirim Seluruh Modul Administrasi Tata Usaha ke Google Drive
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => !isCentralSyncRunning && setIsCentralSyncModalOpen(false)}
+                disabled={isCentralSyncRunning}
+                className="text-blue-200 hover:text-white disabled:opacity-30 p-1.5 rounded-lg hover:bg-white/10 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 overflow-y-auto space-y-5 flex-1 text-slate-800">
+              {/* Progress Bar & Percentage */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                  <span className="flex items-center gap-1.5">
+                    {isCentralSyncRunning ? (
+                      <span className="text-blue-600 font-extrabold flex items-center gap-1">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Sedang Menjalankan Sinkronisasi:
+                      </span>
+                    ) : centralSyncReport ? (
+                      <span className="text-emerald-700 font-extrabold flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Sinkronisasi Lengkap Selesai
+                      </span>
+                    ) : (
+                      <span>Status Sinkronisasi</span>
+                    )}
+                    <span className="text-slate-900">{centralSyncProgress.currentStepTitle}</span>
+                  </span>
+                  <span className="font-mono text-sm font-extrabold text-indigo-700">
+                    {centralSyncProgress.percent}%
+                  </span>
+                </div>
+
+                {/* The visual progress bar */}
+                <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden border border-slate-200 p-0.5">
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ${
+                      centralSyncReport
+                        ? 'bg-gradient-to-r from-emerald-500 to-teal-500'
+                        : centralSyncError
+                        ? 'bg-rose-500'
+                        : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-teal-500'
+                    }`}
+                    style={{ width: `${Math.max(5, centralSyncProgress.percent)}%` }}
+                  />
+                </div>
+
+                <div className="text-[11px] text-slate-500 flex items-center justify-between">
+                  <span className="font-mono">{centralSyncProgress.currentStepDetail}</span>
+                  <span className="font-semibold">
+                    Langkah {centralSyncProgress.currentStep} dari {centralSyncProgress.totalSteps}
+                  </span>
+                </div>
+              </div>
+
+              {/* Error Alert if occurred */}
+              {centralSyncError && (
+                <div className="bg-rose-50 border border-rose-200 text-rose-800 p-4 rounded-xl text-xs space-y-2">
+                  <div className="flex items-start gap-2.5">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="font-bold">Terjadi Kendala Sinkronisasi</h4>
+                      <p className="text-rose-700 text-[11px] mt-0.5">{centralSyncError}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleRunCentralSync}
+                    className="mt-2 bg-rose-600 hover:bg-rose-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 transition"
+                  >
+                    <RotateCw className="w-3.5 h-3.5" /> Coba Ulangi Sinkronisasi
+                  </button>
+                </div>
+              )}
+
+              {/* SUCCESS REPORT CARD */}
+              {centralSyncReport && (
+                <div className="bg-gradient-to-br from-emerald-50 via-teal-50 to-emerald-100/50 border border-emerald-300/80 rounded-2xl p-4.5 space-y-3.5 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-emerald-600 text-white rounded-lg">
+                        <Check className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="font-extrabold text-sm text-emerald-950">
+                          Sinkronisasi Pusat Selesai & Terpadu!
+                        </h4>
+                        <p className="text-[11px] text-emerald-800">
+                          Waktu: {centralSyncReport.timestamp} (Durasi: {centralSyncReport.durationSeconds} detik)
+                        </p>
+                      </div>
+                    </div>
+                    <span className="bg-emerald-200 text-emerald-900 font-extrabold text-xs px-2.5 py-1 rounded-lg">
+                      {centralSyncReport.totalSyncedItems} Arsip/Data
+                    </span>
+                  </div>
+
+                  {/* Module Breakdown Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                    {centralSyncReport.modules.map((m, idx) => (
+                      <div key={idx} className="bg-white/80 border border-emerald-200/60 rounded-xl p-2.5">
+                        <div className="text-[10px] text-slate-500 font-medium truncate">{m.module}</div>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="font-extrabold text-slate-800 text-sm">{m.count} item</span>
+                          <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded">
+                            OK
+                          </span>
+                        </div>
+                        <div className="text-[9px] text-slate-400 truncate mt-0.5 font-mono">
+                          📁 {m.subfolder}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Quick Action in report */}
+                  {centralSyncReport.folderId && (
+                    <div className="pt-1 flex items-center justify-between text-xs">
+                      <span className="text-emerald-900 text-[11px] font-semibold">
+                        Semua file tersimpan rapi di subfolder Google Drive.
+                      </span>
+                      <a
+                        href={`https://drive.google.com/drive/folders/${centralSyncReport.folderId}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-emerald-800 hover:text-emerald-950 font-bold bg-white px-3 py-1.5 rounded-lg border border-emerald-300 shadow-2xs hover:bg-emerald-50 transition"
+                      >
+                        <span>Buka Folder TATA USAHA di Drive</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Step By Step Checklist Breakdown */}
+              <div className="space-y-2">
+                <h4 className="font-extrabold text-xs text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <Workflow className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Tahapan Eksekusi Sinkronisasi (9 Modul)</span>
+                </h4>
+
+                <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 bg-slate-50/50 overflow-hidden">
+                  {centralSyncProgress.steps.map((step) => {
+                    const isRunning = step.status === 'running';
+                    const isCompleted = step.status === 'completed';
+                    const isError = step.status === 'error';
+                    const isWaiting = step.status === 'waiting';
+
+                    return (
+                      <div
+                        key={step.step}
+                        className={`p-2.5 px-3.5 flex items-center justify-between text-xs transition-colors ${
+                          isRunning ? 'bg-blue-50/80 text-blue-900 font-semibold' : ''
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          {isCompleted && (
+                            <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                              <Check className="w-3.5 h-3.5 stroke-[3]" />
+                            </div>
+                          )}
+                          {isRunning && (
+                            <div className="w-5 h-5 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center shrink-0 animate-spin">
+                              <RotateCw className="w-3.5 h-3.5" />
+                            </div>
+                          )}
+                          {isError && (
+                            <div className="w-5 h-5 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+                              <AlertCircle className="w-3.5 h-3.5" />
+                            </div>
+                          )}
+                          {isWaiting && (
+                            <div className="w-5 h-5 rounded-full bg-slate-200 text-slate-500 flex items-center justify-center shrink-0">
+                              <Clock className="w-3 h-3" />
+                            </div>
+                          )}
+                          <div>
+                            <div className="font-bold text-slate-800">{step.title}</div>
+                            <div className="text-[10px] text-slate-500 font-mono">{step.detail}</div>
+                          </div>
+                        </div>
+
+                        <div className="shrink-0">
+                          {isCompleted && (
+                            <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">
+                              Selesai
+                            </span>
+                          )}
+                          {isRunning && (
+                            <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full animate-pulse">
+                              Memproses...
+                            </span>
+                          )}
+                          {isError && (
+                            <span className="text-[10px] bg-rose-100 text-rose-800 font-bold px-2 py-0.5 rounded-full">
+                              Gagal
+                            </span>
+                          )}
+                          {isWaiting && (
+                            <span className="text-[10px] bg-slate-200 text-slate-600 font-medium px-2 py-0.5 rounded-full">
+                              Menunggu
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+              <div className="text-xs text-slate-500 font-mono">
+                {isCentralSyncRunning ? 'Harap jangan menutup jendela ini...' : 'Siap digunakan kembali'}
+              </div>
+              <div className="flex items-center gap-2">
+                {!isCentralSyncRunning && !centralSyncReport && (
+                  <button
+                    onClick={handleRunCentralSync}
+                    className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm transition flex items-center gap-1.5"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Mulai Sinkronisasi</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => setIsCentralSyncModalOpen(false)}
+                  disabled={isCentralSyncRunning}
+                  className="px-4 py-2 text-xs font-bold text-slate-700 bg-white border border-slate-300 hover:bg-slate-100 rounded-xl transition disabled:opacity-40"
+                >
+                  {centralSyncReport ? 'Tutup & Selesai' : 'Tutup'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

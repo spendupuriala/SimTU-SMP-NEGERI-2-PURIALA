@@ -161,7 +161,7 @@ export default function App() {
       return;
     }
 
-    // Debounced sync for continuous modifications
+    // Debounced sync for continuous modifications (e.g. Surat Masuk & Surat Keluar edits)
     setAutoSyncStatus('syncing');
     const timer = setTimeout(async () => {
       try {
@@ -179,7 +179,7 @@ export default function App() {
           setAutoSyncStatus('error');
         }
       }
-    }, 1500);
+    }, 800);
 
     return () => clearTimeout(timer);
   }, [data, googleToken]);
@@ -817,6 +817,8 @@ export default function App() {
             {activeTab === 'pembuat-surat' && (
               <PembuatSuratModule
                 suratList={data.pembuatSurat || []}
+                suratKeluarList={data.suratKeluar || []}
+                suratTugasList={data.suratTugas || []}
                 onAdd={handleAddPembuatSurat}
                 onUpdate={handleUpdatePembuatSurat}
                 onDelete={handleDeletePembuatSurat}
@@ -880,6 +882,10 @@ export default function App() {
                 onConnectGoogle={handleConnectGoogle}
                 onDisconnectGoogle={handleDisconnectGoogle}
                 databaseState={data}
+                onUpdateDatabase={(updated) => {
+                  updateData(updated);
+                  showToast('Sinkronisasi Pusat berhasil memperbarui basis data lokal!', 'success');
+                }}
               />
             )}
 

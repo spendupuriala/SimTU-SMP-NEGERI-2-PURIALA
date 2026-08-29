@@ -61,8 +61,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Breadcrumb & Top Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      {/* Breadcrumb & Title */}
+      <div className="flex items-center justify-between">
         <div>
           <div className="text-xs text-slate-500 font-medium tracking-wide">
             Beranda / <span className="text-slate-800 font-semibold">Ikhtisar Administrasi</span>
@@ -71,29 +71,57 @@ export const Dashboard: React.FC<DashboardProps> = ({
             DASHBOARD TATA USAHA SMPN 2 PURIALA
           </h2>
         </div>
+      </div>
+
+      {/* Welcome Banner with Official SimTU Icon */}
+      <div className="bg-gradient-to-r from-[#162a45] via-[#1e3a63] to-[#254b80] rounded-2xl p-4 sm:p-5 text-white shadow-md border border-slate-700/50 flex flex-col md:flex-row items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden shadow-xl border-2 border-white/30 shrink-0 bg-white/10">
+            <img
+              src="/simtu-icon.png"
+              alt="SimTU SMP Negeri 2 Puriala App Icon"
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+            />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="bg-amber-400/20 text-amber-300 text-[10px] font-extrabold px-2 py-0.5 rounded-full border border-amber-400/30 uppercase tracking-wider">
+                Aplikasi Resmi TU
+              </span>
+              <span className="text-slate-300 text-xs hidden sm:inline">• NPSN: 40402636</span>
+            </div>
+            <h1 className="text-lg sm:text-xl font-black tracking-wide text-white mt-1">
+              SimTU SMP NEGERI 2 PURIALA
+            </h1>
+            <p className="text-xs text-blue-100/85 mt-0.5 max-w-xl">
+              Sistem Informasi Persuratan &amp; Administrasi Tata Usaha Sekolah terintegrasi Google Drive Cloud Backup.
+            </p>
+          </div>
+        </div>
 
         {/* Action Shortcuts */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-start md:justify-end">
           <button
             onClick={() => onNavigate('pembuat-surat')}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-2.5 px-3.5 rounded-lg shadow-sm transition flex items-center gap-1.5"
+            className="bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold py-2.5 px-3.5 rounded-xl shadow-md transition flex items-center gap-1.5"
           >
-            <FilePlus2 className="w-4 h-4" />
+            <FilePlus2 className="w-4 h-4 text-slate-950" />
             <span>Pembuat Surat</span>
           </button>
           <button
             onClick={() => onNavigate('surat-masuk')}
-            className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2.5 px-3.5 rounded-lg shadow-sm transition flex items-center gap-1.5"
+            className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold py-2.5 px-3.5 rounded-xl shadow-md transition flex items-center gap-1.5"
           >
             <PlusCircle className="w-4 h-4" />
-            <span>Agenda Surat Masuk</span>
+            <span>Agenda Masuk</span>
           </button>
           <button
             onClick={() => onNavigate('surat-tugas')}
-            className="bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold py-2.5 px-3.5 rounded-lg shadow-sm transition flex items-center gap-1.5"
+            className="bg-white/15 hover:bg-white/25 text-white text-xs font-bold py-2.5 px-3.5 rounded-xl border border-white/20 shadow-sm transition flex items-center gap-1.5"
           >
             <FileText className="w-4 h-4" />
-            <span>Buat SPT Dinas</span>
+            <span>SPT Dinas</span>
           </button>
         </div>
       </div>

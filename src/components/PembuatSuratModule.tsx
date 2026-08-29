@@ -39,12 +39,15 @@ import {
   TargetSubjekSurat,
   PenandatanganTipe,
   KodeKlasifikasiSurat,
+  SuratKeluar,
+  SuratTugasDinas,
 } from '../types';
 import { DEFAULT_KODE_KLASIFIKASI } from '../services/googleSheets';
 import {
   DAFTAR_TEMPLATE_SURAT,
   JenisSuratTemplateOption,
   generateAutoNomorSurat,
+  getHighestNomorUrutFromLists,
   renderSuratDocumentHTML,
   downloadSuratAsWordDoc,
   downloadSuratAsHTML,
@@ -54,6 +57,8 @@ import { uploadPembuatSuratDocumentToDrive } from '../services/googleDrive';
 
 interface PembuatSuratModuleProps {
   suratList?: PembuatSuratRecord[];
+  suratKeluarList?: SuratKeluar[];
+  suratTugasList?: SuratTugasDinas[];
   onAdd: (surat: PembuatSuratRecord) => void;
   onUpdate: (surat: PembuatSuratRecord) => void;
   onDelete: (id: string) => void;
@@ -69,6 +74,8 @@ interface PembuatSuratModuleProps {
 
 export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
   suratList = [],
+  suratKeluarList = [],
+  suratTugasList = [],
   onAdd,
   onUpdate,
   onDelete,
@@ -214,12 +221,19 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
     return { total, siswa, guru, terbit, draft };
   }, [suratList]);
 
+  // Helper to compute next sequential number across all modules and agendas
+  const getNextNomorUrut = (): number => {
+    const highest = getHighestNomorUrutFromLists(suratList, suratKeluarList, suratTugasList);
+    return highest > 0 ? highest + 1 : (suratList.length + 1);
+  };
+
   // Reset & Open Form for New Surat
   const handleOpenNewForm = (presetTarget?: TargetSubjekSurat) => {
     const target = presetTarget || 'siswa';
     const firstTemplate = DAFTAR_TEMPLATE_SURAT.find((t) => t.target === target) || DAFTAR_TEMPLATE_SURAT[0];
     const initialKode = firstTemplate.kodeKlasifikasi || '421.3';
-    const autoNo = generateAutoNomorSurat(initialKode, suratList.length + 1);
+    const nextIdx = getNextNomorUrut();
+    const autoNo = generateAutoNomorSurat(initialKode, nextIdx);
 
     setEditingSuratId(null);
     setCurrentStep(1);
@@ -324,7 +338,7 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
     setFormKodeKlasifikasi(initialKode);
     setFormPerihal(firstTemplate.defaultPerihal);
     setFormKeperluan(firstTemplate.defaultKeperluan);
-    setFormNoSurat(generateAutoNomorSurat(initialKode, suratList.length + 1, formTanggalSurat));
+    setFormNoSurat(generateAutoNomorSurat(initialKode, getNextNomorUrut(), formTanggalSurat));
     setFormSearchQuery('');
     setFormSelectedSubjek({
       nama: '',
@@ -341,14 +355,14 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
       setFormKodeKlasifikasi(code);
       setFormPerihal(tmpl.defaultPerihal);
       setFormKeperluan(tmpl.defaultKeperluan);
-      setFormNoSurat(generateAutoNomorSurat(code, suratList.length + 1, formTanggalSurat));
+      setFormNoSurat(generateAutoNomorSurat(code, getNextNomorUrut(), formTanggalSurat));
     }
   };
 
   // Handle classification code change
   const handleKodeKlasifikasiChange = (newKode: string) => {
     setFormKodeKlasifikasi(newKode);
-    const autoNo = generateAutoNomorSurat(newKode, suratList.length + 1, formTanggalSurat);
+    const autoNo = generateAutoNomorSurat(newKode, getNextNomorUrut(), formTanggalSurat);
     setFormNoSurat(autoNo);
   };
 

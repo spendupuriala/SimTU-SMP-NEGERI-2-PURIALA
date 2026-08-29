@@ -32,6 +32,8 @@ import {
   IdentitasSekolah,
   GuruPTK,
   KodeKlasifikasiSurat,
+  SuratKeluar,
+  PembuatSuratRecord,
 } from '../types';
 import { DEFAULT_KODE_KLASIFIKASI } from '../services/googleSheets';
 import {
@@ -44,6 +46,7 @@ import {
   LOGO_TUT_WURI_BASE64,
   terbilangHari,
 } from '../utils/skTemplates';
+import { getHighestNomorUrutFromLists } from '../utils/suratTemplates';
 import {
   findSuratTugasTemplateInDrive,
   fetchSuratFolderFiles,
@@ -53,6 +56,8 @@ import {
 
 interface SuratTugasDinasModuleProps {
   tugasList: SuratTugasDinas[];
+  suratKeluarList?: SuratKeluar[];
+  pembuatSuratList?: PembuatSuratRecord[];
   onAdd: (item: SuratTugasDinas) => void;
   onUpdate: (item: SuratTugasDinas) => void;
   onDelete: (id: string) => void;
@@ -67,6 +72,8 @@ interface SuratTugasDinasModuleProps {
 
 export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
   tugasList,
+  suratKeluarList = [],
+  pembuatSuratList = [],
   onAdd,
   onUpdate,
   onDelete,
@@ -81,6 +88,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<SuratTugasDinas | null>(null);
+  const [suratToDelete, setSuratToDelete] = useState<SuratTugasDinas | null>(null);
 
   // Print & Preview State
   const [selectedForPrint, setSelectedForPrint] = useState<SuratTugasDinas | null>(null);
@@ -94,7 +102,12 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
   const [isSavingToDrive, setIsSavingToDrive] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
 
-  const nextNumber = String(tugasList.length + 1).padStart(3, '0');
+  const getNextNomorUrut = (): number => {
+    const highest = getHighestNomorUrutFromLists(tugasList, suratKeluarList, pembuatSuratList);
+    return highest > 0 ? highest + 1 : (tugasList.length + 1);
+  };
+
+  const nextNumber = String(getNextNomorUrut()).padStart(3, '0');
 
   const [formData, setFormData] = useState<Partial<SuratTugasDinas>>({
     kodeKlasifikasi: '090',
@@ -166,7 +179,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
   };
 
   const handleOpenAdd = () => {
-    const nextNum = String(tugasList.length + 1).padStart(3, '0');
+    const nextNum = nextNumber;
     setEditingItem(null);
     setFormData({
       kodeKlasifikasi: '090',
@@ -582,13 +595,10 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
 
                         {/* Delete */}
                         <button
-                          onClick={() => {
-                            if (confirm(`Hapus data surat tugas ${item.noSuratTugas}?`)) {
-                              onDelete(item.id);
-                            }
-                          }}
+                          id={`btn-delete-surat-tugas-${item.id}`}
+                          onClick={() => setSuratToDelete(item)}
                           className="text-slate-400 hover:text-red-600 p-1.5 rounded hover:bg-slate-100 transition"
-                          title="Hapus"
+                          title="Hapus Data Surat Tugas"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -1449,6 +1459,78 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                   Tutup
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Konfirmasi Hapus Surat Tugas */}
+      {suratToDelete && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in duration-200">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="font-bold text-slate-900 text-base">Hapus Surat Tugas Dinas?</h3>
+                <p className="text-xs text-slate-500">
+                  Tindakan ini akan menghapus data Surat Perintah Tugas dan otomatis memperbarui sinkronisasi cloud.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 p-3 bg-slate-50 rounded-xl border border-slate-100 text-xs space-y-1.5 font-sans">
+              <div className="flex justify-between items-center gap-2">
+                <span className="text-slate-500">No. Surat Tugas:</span>
+                <span className="font-mono font-bold text-sky-800 bg-sky-50 px-2 py-0.5 rounded border border-sky-200 text-[11px] truncate max-w-[200px]">
+                  {suratToDelete.noSuratTugas}
+                </span>
+              </div>
+              {suratToDelete.noSPPD && (
+                <div className="flex justify-between items-center gap-2">
+                  <span className="text-slate-500">No. SPPD:</span>
+                  <span className="font-mono font-bold text-slate-700 bg-white px-2 py-0.5 rounded border border-slate-200 text-[11px] truncate max-w-[200px]">
+                    {suratToDelete.noSPPD}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between items-center gap-2">
+                <span className="text-slate-500">Maksud Tugas:</span>
+                <span className="font-bold text-slate-800 truncate max-w-[200px]">
+                  {suratToDelete.maksudTugas}
+                </span>
+              </div>
+              <div className="flex justify-between items-center gap-2">
+                <span className="text-slate-500">Tujuan:</span>
+                <span className="text-slate-700 truncate max-w-[200px]">{suratToDelete.tempatTujuan}</span>
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                id="btn-batal-hapus-surat-tugas"
+                onClick={() => setSuratToDelete(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-100 border border-slate-300 transition"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                id="btn-konfirmasi-hapus-surat-tugas"
+                onClick={() => {
+                  onDelete(suratToDelete.id);
+                  if (selectedForPrint?.id === suratToDelete.id) {
+                    setSelectedForPrint(null);
+                  }
+                  setSuratToDelete(null);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 shadow-sm transition flex items-center gap-2"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Ya, Hapus Dokumen</span>
+              </button>
             </div>
           </div>
         </div>
