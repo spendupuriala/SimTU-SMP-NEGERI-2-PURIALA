@@ -1381,82 +1381,161 @@ export const DriveExplorerModule: React.FC<DriveExplorerModuleProps> = ({
               )}
 
               {/* SUCCESS REPORT CARD */}
-              {centralSyncReport && (
-                <div className="bg-gradient-to-br from-emerald-50 via-teal-50 to-emerald-100/50 border border-emerald-300/80 rounded-2xl p-4.5 space-y-3.5 shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="p-1.5 bg-emerald-600 text-white rounded-lg">
-                        <Check className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h4 className="font-extrabold text-sm text-emerald-950">
-                          Sinkronisasi Pusat Selesai & Terpadu!
-                        </h4>
-                        <p className="text-[11px] text-emerald-800">
-                          Waktu: {centralSyncReport.timestamp} (Durasi: {centralSyncReport.durationSeconds} detik)
-                        </p>
-                      </div>
-                    </div>
-                    <span className="bg-emerald-200 text-emerald-900 font-extrabold text-xs px-2.5 py-1 rounded-lg">
-                      {centralSyncReport.totalSyncedItems} Arsip/Data
-                    </span>
-                  </div>
+              {centralSyncReport && (() => {
+                const moduleEntries = [
+                  {
+                    key: 'suratMasuk',
+                    name: 'Surat Masuk',
+                    count: (centralSyncReport.modules?.suratMasuk?.pushed || 0) + (centralSyncReport.modules?.suratMasuk?.pulled || 0),
+                    folder: centralSyncReport.modules?.suratMasuk?.driveFolder || '01_SURAT_MASUK',
+                    sourceSheet: centralSyncReport.modules?.suratMasuk?.sourceSheet,
+                  },
+                  {
+                    key: 'suratKeluar',
+                    name: 'Surat Keluar & Register',
+                    count: (centralSyncReport.modules?.suratKeluar?.pushed || 0) + (centralSyncReport.modules?.suratKeluar?.pulled || 0),
+                    folder: centralSyncReport.modules?.suratKeluar?.driveFolder || '02_SURAT_KELUAR',
+                    sourceSheet: centralSyncReport.modules?.suratKeluar?.sourceSheet,
+                  },
+                  {
+                    key: 'skKBM',
+                    name: 'SK Pembagian Tugas KBM',
+                    count: (centralSyncReport.modules?.skKBM?.pushed || 0) + (centralSyncReport.modules?.skKBM?.pulled || 0),
+                    folder: centralSyncReport.modules?.skKBM?.driveFolder || '03_SK_DAN_SPT_DINAS',
+                  },
+                  {
+                    key: 'skTugasTambahan',
+                    name: 'SK Tugas Tambahan',
+                    count: (centralSyncReport.modules?.skTugasTambahan?.pushed || 0) + (centralSyncReport.modules?.skTugasTambahan?.pulled || 0),
+                    folder: centralSyncReport.modules?.skTugasTambahan?.driveFolder || '03_SK_DAN_SPT_DINAS',
+                  },
+                  {
+                    key: 'suratTugas',
+                    name: 'SPT Dinas',
+                    count: (centralSyncReport.modules?.suratTugas?.pushed || 0) + (centralSyncReport.modules?.suratTugas?.pulled || 0),
+                    folder: centralSyncReport.modules?.suratTugas?.driveFolder || '03_SK_DAN_SPT_DINAS',
+                  },
+                  {
+                    key: 'pembuatSurat',
+                    name: 'Draf Pembuat Surat',
+                    count: (centralSyncReport.modules?.pembuatSurat?.pushed || 0) + (centralSyncReport.modules?.pembuatSurat?.pulled || 0),
+                    folder: centralSyncReport.modules?.pembuatSurat?.driveFolder || '02_SURAT_KELUAR',
+                  },
+                  {
+                    key: 'guruPTK',
+                    name: 'Data Guru & PTK',
+                    count: (centralSyncReport.modules?.guruPTK?.pushed || 0) + (centralSyncReport.modules?.guruPTK?.pulled || 0),
+                    folder: centralSyncReport.modules?.guruPTK?.driveFolder || '04_KEPEGAWAIAN_PTK',
+                    sourceSheet: centralSyncReport.modules?.guruPTK?.sourceSheet,
+                  },
+                  {
+                    key: 'siswa',
+                    name: 'Data Siswa Buku Induk',
+                    count: (centralSyncReport.modules?.siswa?.pushed || 0) + (centralSyncReport.modules?.siswa?.pulled || 0),
+                    folder: centralSyncReport.modules?.siswa?.driveFolder || '05_KESISWAAN_DAN_ALUMNI',
+                    sourceSheet: centralSyncReport.modules?.siswa?.sourceSheet,
+                  },
+                  {
+                    key: 'alumni',
+                    name: 'Buku Induk Alumni',
+                    count: (centralSyncReport.modules?.alumni?.pushed || 0) + (centralSyncReport.modules?.alumni?.pulled || 0),
+                    folder: centralSyncReport.modules?.alumni?.driveFolder || '05_KESISWAAN_DAN_ALUMNI',
+                    sourceSheet: centralSyncReport.modules?.alumni?.sourceSheet,
+                  },
+                  {
+                    key: 'masterBackup',
+                    name: 'Cadangan Database Master',
+                    count: (centralSyncReport.modules?.masterBackup?.pushed || 0) + (centralSyncReport.modules?.masterBackup?.pulled || 0),
+                    folder: centralSyncReport.modules?.masterBackup?.driveFolder || '06_DATABASE_DAN_BACKUP',
+                  },
+                ];
 
-                  {/* Module Breakdown Grid */}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
-                    {centralSyncReport.modules.map((m, idx) => (
-                      <div key={idx} className="bg-white/80 border border-emerald-200/60 rounded-xl p-2.5">
-                        <div className="text-[10px] text-slate-500 font-medium truncate">{m.module}</div>
-                        <div className="flex items-center justify-between mt-1">
-                          <span className="font-extrabold text-slate-800 text-sm">{m.count} item</span>
-                          <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded">
-                            OK
-                          </span>
+                return (
+                  <div className="bg-gradient-to-br from-emerald-50 via-teal-50 to-emerald-100/50 border border-emerald-300/80 rounded-2xl p-4.5 space-y-3.5 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 bg-emerald-600 text-white rounded-lg">
+                          <Check className="w-4 h-4" />
                         </div>
-                        <div className="text-[9px] text-slate-400 truncate mt-0.5 font-mono">
-                          📁 {m.subfolder}
+                        <div>
+                          <h4 className="font-extrabold text-sm text-emerald-950">
+                            Sinkronisasi Pusat Selesai & Terpadu!
+                          </h4>
+                          <p className="text-[11px] text-emerald-800">
+                            Waktu: {centralSyncReport.timestamp} (Durasi: {centralSyncReport.durationSeconds} detik)
+                          </p>
                         </div>
                       </div>
-                    ))}
-                  </div>
-
-                  {/* Quick Action in report */}
-                  {centralSyncReport.folderId && (
-                    <div className="pt-1 flex items-center justify-between text-xs">
-                      <span className="text-emerald-900 text-[11px] font-semibold">
-                        Semua file tersimpan rapi di subfolder Google Drive.
+                      <span className="bg-emerald-200 text-emerald-900 font-extrabold text-xs px-2.5 py-1 rounded-lg">
+                        {centralSyncReport.totalSyncedItems} Arsip/Data
                       </span>
-                      <a
-                        href={`https://drive.google.com/drive/folders/${centralSyncReport.folderId}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-emerald-800 hover:text-emerald-950 font-bold bg-white px-3 py-1.5 rounded-lg border border-emerald-300 shadow-2xs hover:bg-emerald-50 transition"
-                      >
-                        <span>Buka Folder TATA USAHA di Drive</span>
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
                     </div>
-                  )}
-                </div>
-              )}
+
+                    {/* Module Breakdown Grid */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                      {moduleEntries.map((m) => (
+                        <div key={m.key} className="bg-white/80 border border-emerald-200/60 rounded-xl p-2.5 flex flex-col justify-between">
+                          <div>
+                            <div className="text-[10px] text-slate-500 font-medium truncate">{m.name}</div>
+                            <div className="flex items-center justify-between mt-1">
+                              <span className="font-extrabold text-slate-800 text-sm">{m.count} item</span>
+                              <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded">
+                                OK
+                              </span>
+                            </div>
+                          </div>
+                          <div className="mt-1.5 space-y-0.5">
+                            {m.sourceSheet && (
+                              <div className="text-[8.5px] text-teal-700 bg-teal-50 px-1 py-0.5 rounded font-mono truncate" title={m.sourceSheet}>
+                                📊 {m.sourceSheet}
+                              </div>
+                            )}
+                            <div className="text-[9px] text-slate-400 truncate font-mono">
+                              📁 {m.folder}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Quick Action in report */}
+                    {centralSyncReport.tataUsahaFolderId && (
+                      <div className="pt-1 flex items-center justify-between text-xs">
+                        <span className="text-emerald-900 text-[11px] font-semibold">
+                          Semua file tersimpan rapi di subfolder Google Drive.
+                        </span>
+                        <a
+                          href={centralSyncReport.tataUsahaFolderLink || `https://drive.google.com/drive/folders/${centralSyncReport.tataUsahaFolderId}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-emerald-800 hover:text-emerald-950 font-bold bg-white px-3 py-1.5 rounded-lg border border-emerald-300 shadow-2xs hover:bg-emerald-50 transition"
+                        >
+                          <span>Buka Folder TATA USAHA di Drive</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Step By Step Checklist Breakdown */}
               <div className="space-y-2">
                 <h4 className="font-extrabold text-xs text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
                   <Workflow className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>Tahapan Eksekusi Sinkronisasi (9 Modul)</span>
+                  <span>Tahapan Eksekusi Sinkronisasi</span>
                 </h4>
 
                 <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 bg-slate-50/50 overflow-hidden">
-                  {centralSyncProgress.steps.map((step) => {
-                    const isRunning = step.status === 'running';
+                  {centralSyncProgress.steps.map((step, stepIdx) => {
+                    const isRunning = step.status === 'in-progress' || (step.status as any) === 'running';
                     const isCompleted = step.status === 'completed';
                     const isError = step.status === 'error';
                     const isWaiting = step.status === 'waiting';
 
                     return (
                       <div
-                        key={step.step}
+                        key={step.id || `sync-step-${stepIdx}`}
                         className={`p-2.5 px-3.5 flex items-center justify-between text-xs transition-colors ${
                           isRunning ? 'bg-blue-50/80 text-blue-900 font-semibold' : ''
                         }`}

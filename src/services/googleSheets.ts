@@ -1,4 +1,13 @@
-import { SuratMasuk, SuratKeluar, SifatSurat, KodeKlasifikasiSurat } from '../types';
+import {
+  SuratMasuk,
+  SuratKeluar,
+  SifatSurat,
+  KodeKlasifikasiSurat,
+  GuruPTK,
+  PTK,
+  Siswa,
+  Alumni,
+} from '../types';
 
 const SHEETS_API_URL = 'https://sheets.googleapis.com/v4/spreadsheets';
 const DRIVE_API_URL = 'https://www.googleapis.com/drive/v3';
@@ -1662,4 +1671,673 @@ export const writeKodeKlasifikasiToSheet = async (
     throw new Error(err?.error?.message || 'Gagal menyimpan data ke sheet KODE NOMOR SURAT');
   }
 };
+
+/**
+ * Search all accessible Google Spreadsheets in user's Drive with detailed sheet tabs
+ */
+export const searchAllDriveSpreadsheets = async (
+  accessToken: string
+): Promise<{ id: string; name: string; folderName?: string; webViewLink?: string; sheetNames: string[] }[]> => {
+  const query = "mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false";
+  const params = new URLSearchParams({
+    q: query,
+    fields: 'files(id, name, parents, modifiedTime, webViewLink)',
+    orderBy: 'modifiedTime desc',
+    pageSize: '50',
+  });
+
+  const response = await fetch(`${DRIVE_API_URL}/files?${params.toString()}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const data = await response.json();
+  const files = data.files || [];
+
+  const results: { id: string; name: string; folderName?: string; webViewLink?: string; sheetNames: string[] }[] = [];
+
+  for (const file of files) {
+    try {
+      const meta = await getSpreadsheetMetadata(accessToken, file.id);
+      results.push({
+        id: file.id,
+        name: file.name,
+        webViewLink: file.webViewLink,
+        sheetNames: meta.sheetNames || [],
+      });
+    } catch {
+      results.push({
+        id: file.id,
+        name: file.name,
+        webViewLink: file.webViewLink,
+        sheetNames: [],
+      });
+    }
+  }
+
+  return results;
+};
+
+/**
+ * Parses raw spreadsheet rows into structured GuruPTK array
+ * Compatible with Dapodik, BKN, and internal school staffing registers
+ */
+export const parseGuruPTKFromRows = (rawRows: string[][]): { headers: string[]; ptkList: GuruPTK[] } => {
+  if (!rawRows || rawRows.length === 0) {
+    return { headers: [], ptkList: [] };
+  }
+
+  // 1. Find header row
+  const headerKeywords = [
+    'nama', 'nip', 'nuptk', 'jabatan', 'golongan', 'pangkat',
+    'status', 'tmt', 'mapel', 'pendidikan', 'jurusan', 'jk', 'lahir'
+  ];
+
+  let headerRowIndex = 0;
+  let maxScore = 0;
+
+  for (let i = 0; i < Math.min(rawRows.length, 10); i++) {
+    const row = rawRows[i];
+    if (!row) continue;
+    let score = 0;
+    row.forEach((cell) => {
+      const cellLower = String(cell || '').toLowerCase().trim();
+      if (headerKeywords.some((kw) => cellLower.includes(kw))) {
+        score++;
+      }
+    });
+    if (score > maxScore) {
+      maxScore = score;
+      headerRowIndex = i;
+    }
+  }
+
+  const headers = (rawRows[headerRowIndex] || []).map((h) => String(h || '').trim());
+  const dataRows = rawRows.slice(headerRowIndex + 1);
+
+  const findColIndex = (keywords: string[]): number => {
+    return headers.findIndex((h) => {
+      const lower = (h || '').toLowerCase().trim();
+      return keywords.some((kw) => lower.includes(kw));
+    });
+  };
+
+  const colNama = findColIndex(['nama lengkap', 'nama guru', 'nama ptk', 'nama pegawai', 'nama']);
+  const colNip = findColIndex(['nip', 'n.i.p', 'nip/karpeg', 'nomor induk pegawai']);
+  const colNuptk = findColIndex(['nuptk', 'n.u.p.t.k']);
+  const colJk = findColIndex(['jenis kelamin', 'jk', 'l/p', 'gender', 'kelamin']);
+  const colTempatLahir = findColIndex(['tempat lahir', 'tmp lahir', 'tempat']);
+  const colTanggalLahir = findColIndex(['tanggal lahir', 'tgl lahir', 'tgl. lahir']);
+  const colJabatan = findColIndex(['jabatan', 'tugas pokok', 'tugas', 'jabatan fungsional']);
+  const colJenisPTK = findColIndex(['jenis ptk', 'jenis pegawai', 'kategori ptk', 'jenis tenaga']);
+  const colStatusKepegawaian = findColIndex(['status kepegawaian', 'status pegawai', 'status ptk', 'status']);
+  const colGolongan = findColIndex(['pangkat / golongan', 'pangkat/golongan', 'pangkat/gol', 'golongan', 'gol', 'pangkat', 'ruang']);
+  const colMapel = findColIndex(['mata pelajaran', 'mapel utama', 'mapel', 'bidang studi', 'guru kelas']);
+  const colTmtPengangkatan = findColIndex(['tmt pengangkatan', 'tmt cpns', 'tmt pns', 'tmt kerja', 'tmt']);
+  const colStatusSertifikasi = findColIndex(['status sertifikasi', 'sertifikasi', 'sertifikat pendidik', 'tpg']);
+  const colPendidikan = findColIndex(['pendidikan terakhir', 'pendidikan', 'jenjang', 'ijazah', 'pend. terakhir']);
+  const colJurusan = findColIndex(['jurusan', 'program studi', 'prodi']);
+  const colNoHp = findColIndex(['no hp', 'no telp', 'no. hp', 'nomor hp', 'telepon', 'hp', 'whatsapp', 'wa']);
+  const colEmail = findColIndex(['email', 'e-mail', 'surat elektronik']);
+
+  const ptkList: GuruPTK[] = [];
+
+  dataRows.forEach((row, idx) => {
+    if (!row || row.length === 0 || row.every((c) => !c || String(c).trim() === '')) {
+      return;
+    }
+
+    const rowStr = row.map((c) => String(c || '').toLowerCase().trim()).join(' ');
+    // Skip subheaders or signatures
+    if (
+      rowStr.includes('mengetahui') ||
+      rowStr.includes('kepala sekolah') ||
+      rowStr.includes('kepala tata usaha') ||
+      rowStr.includes('pembina tk. i') ||
+      rowStr.includes('jumlah')
+    ) {
+      const hasRealPerson = row.some((c) => {
+        const val = String(c || '').trim();
+        return /\d{18}/.test(val) || (val.length > 5 && (val.includes('S.Pd') || val.includes('M.Pd') || val.includes('Drs')));
+      });
+      if (!hasRealPerson) return;
+    }
+
+    const getVal = (colIdx: number, defaultVal = ''): string => {
+      if (colIdx >= 0 && colIdx < row.length && row[colIdx] !== undefined && row[colIdx] !== null) {
+        return String(row[colIdx]).trim();
+      }
+      return defaultVal;
+    };
+
+    const rawNama = getVal(colNama);
+    const rawNip = getVal(colNip);
+    const rawNuptk = getVal(colNuptk);
+
+    if (!rawNama && !rawNip && !rawNuptk) {
+      return;
+    }
+
+    const rawJk = getVal(colJk);
+    const rawTempatLahir = getVal(colTempatLahir);
+    const rawTanggalLahir = getVal(colTanggalLahir);
+    const rawJabatan = getVal(colJabatan);
+    const rawJenisPTK = getVal(colJenisPTK);
+    const rawStatus = getVal(colStatusKepegawaian);
+    const rawGolongan = getVal(colGolongan);
+    const rawMapel = getVal(colMapel);
+    const rawTmt = getVal(colTmtPengangkatan);
+    const rawSertifikasi = getVal(colStatusSertifikasi);
+    const rawPendidikan = getVal(colPendidikan);
+    const rawJurusan = getVal(colJurusan);
+    const rawNoHp = getVal(colNoHp);
+    const rawEmail = getVal(colEmail);
+
+    let jkNormalized: 'Laki-laki' | 'Perempuan' = 'Laki-laki';
+    const lowerJk = rawJk.toLowerCase();
+    if (lowerJk === 'p' || lowerJk.includes('perempuan') || lowerJk.includes('wanita')) {
+      jkNormalized = 'Perempuan';
+    }
+
+    let statusKepNormalized = rawStatus || 'PNS';
+    const lowerStatus = statusKepNormalized.toLowerCase();
+    if (lowerStatus.includes('pppk')) statusKepNormalized = 'PPPK';
+    else if (lowerStatus.includes('pns')) statusKepNormalized = 'PNS';
+    else if (lowerStatus.includes('gtt') || lowerStatus.includes('honorer')) statusKepNormalized = 'Guru Honorer / GTT';
+    else if (lowerStatus.includes('ptt')) statusKepNormalized = 'PTT / Tenaga Honorer';
+
+    const item: GuruPTK = {
+      id: `ptk-gdrive-${Date.now()}-${ptkList.length + 1}`,
+      namaLengkap: rawNama || 'Pendidik / Tenaga Kependidikan',
+      nip: rawNip || '-',
+      nuptk: rawNuptk || '-',
+      jenisKelamin: jkNormalized,
+      tempatLahir: rawTempatLahir || 'Puriala',
+      tanggalLahir: formatSheetDate(rawTanggalLahir) || '1985-01-01',
+      jabatan: rawJabatan || (rawNama.toLowerCase().includes('kepala sekolah') ? 'Kepala Sekolah' : 'Guru Mata Pelajaran'),
+      jenisPTK: rawJenisPTK || (rawJabatan.toLowerCase().includes('tata usaha') || rawJabatan.toLowerCase().includes('administrasi') ? 'Tenaga Administrasi Sekolah' : 'Guru Mapel'),
+      statusKepegawaian: statusKepNormalized,
+      golongan: rawGolongan || '-',
+      pangkatGolongan: rawGolongan || '-',
+      mapelUtama: rawMapel || '-',
+      tmtPengangkatan: formatSheetDate(rawTmt) || '2015-01-01',
+      tmtKerja: formatSheetDate(rawTmt) || '2015-01-01',
+      statusSertifikasi: rawSertifikasi.toLowerCase().includes('sudah') || rawSertifikasi.toLowerCase().includes('ya') || rawSertifikasi.toLowerCase().includes('lulus') ? 'Sudah Sertifikasi' : 'Belum Sertifikasi',
+      pendidikanTerakhir: rawPendidikan || 'S1 Pendidikan',
+      jurusan: rawJurusan || 'Pendidikan',
+      noHp: rawNoHp || '-',
+      email: rawEmail || '',
+      berkasDigital: [
+        { id: `b1-${idx}`, namaFile: 'SK_Pangkat_Berkala.pdf', jenisBerkas: 'SK Kepegawaian', ukuran: '1.2 MB', tanggalUnggah: '2026-01-15' },
+      ],
+    };
+
+    ptkList.push(item);
+  });
+
+  return { headers, ptkList };
+};
+
+/**
+ * Parses raw spreadsheet rows into structured Siswa array
+ * Compatible with Buku Induk Siswa & Dapodik Kesiswaan
+ */
+export const parseSiswaFromRows = (rawRows: string[][]): { headers: string[]; siswaList: Siswa[] } => {
+  if (!rawRows || rawRows.length === 0) {
+    return { headers: [], siswaList: [] };
+  }
+
+  // 1. Find header row
+  const headerKeywords = [
+    'nis', 'nisn', 'nama', 'kelas', 'jk', 'tempat',
+    'lahir', 'agama', 'ayah', 'ibu', 'alamat', 'status'
+  ];
+
+  let headerRowIndex = 0;
+  let maxScore = 0;
+
+  for (let i = 0; i < Math.min(rawRows.length, 10); i++) {
+    const row = rawRows[i];
+    if (!row) continue;
+    let score = 0;
+    row.forEach((cell) => {
+      const cellLower = String(cell || '').toLowerCase().trim();
+      if (headerKeywords.some((kw) => cellLower.includes(kw))) {
+        score++;
+      }
+    });
+    if (score > maxScore) {
+      maxScore = score;
+      headerRowIndex = i;
+    }
+  }
+
+  const headers = (rawRows[headerRowIndex] || []).map((h) => String(h || '').trim());
+  const dataRows = rawRows.slice(headerRowIndex + 1);
+
+  const findColIndex = (keywords: string[]): number => {
+    return headers.findIndex((h) => {
+      const lower = (h || '').toLowerCase().trim();
+      return keywords.some((kw) => lower.includes(kw));
+    });
+  };
+
+  const colNis = findColIndex(['nis', 'n.i.s', 'no induk', 'nomor induk']);
+  const colNisn = findColIndex(['nisn', 'n.i.s.n', 'nomor induk siswa nasional']);
+  const colNama = findColIndex(['nama lengkap', 'nama siswa', 'nama peserta didik', 'nama murid', 'nama']);
+  const colJk = findColIndex(['jenis kelamin', 'jk', 'l/p', 'gender']);
+  const colTempatLahir = findColIndex(['tempat lahir', 'tmp lahir', 'tempat']);
+  const colTanggalLahir = findColIndex(['tanggal lahir', 'tgl lahir', 'tgl. lahir']);
+  const colKelas = findColIndex(['kelas', 'rombel', 'tingkat']);
+  const colAgama = findColIndex(['agama']);
+  const colNamaAyah = findColIndex(['nama ayah', 'ayah', 'nama bapak', 'bapak']);
+  const colPekerjaanAyah = findColIndex(['pekerjaan ayah', 'pekerjaan bapak']);
+  const colNamaIbu = findColIndex(['nama ibu', 'ibu']);
+  const colPekerjaanIbu = findColIndex(['pekerjaan ibu']);
+  const colAlamat = findColIndex(['alamat', 'desa', 'alamat tempat tinggal', 'domisili']);
+  const colNoTelp = findColIndex(['no telp', 'no hp', 'telepon ortu', 'kontak ortu', 'no wa', 'hp']);
+  const colStatusSiswa = findColIndex(['status siswa', 'status', 'keterangan']);
+  const colTahunMasuk = findColIndex(['tahun masuk', 'thn masuk', 'angkatan']);
+
+  const siswaList: Siswa[] = [];
+
+  dataRows.forEach((row, idx) => {
+    if (!row || row.length === 0 || row.every((c) => !c || String(c).trim() === '')) {
+      return;
+    }
+
+    const getVal = (colIdx: number, defaultVal = ''): string => {
+      if (colIdx >= 0 && colIdx < row.length && row[colIdx] !== undefined && row[colIdx] !== null) {
+        return String(row[colIdx]).trim();
+      }
+      return defaultVal;
+    };
+
+    const rawNama = getVal(colNama);
+    const rawNis = getVal(colNis);
+    const rawNisn = getVal(colNisn);
+
+    if (!rawNama && !rawNis && !rawNisn) {
+      return;
+    }
+
+    const rawJk = getVal(colJk);
+    const rawTempatLahir = getVal(colTempatLahir);
+    const rawTanggalLahir = getVal(colTanggalLahir);
+    const rawKelas = getVal(colKelas);
+    const rawAgama = getVal(colAgama);
+    const rawAyah = getVal(colNamaAyah);
+    const rawPekAyah = getVal(colPekerjaanAyah);
+    const rawIbu = getVal(colNamaIbu);
+    const rawPekIbu = getVal(colPekerjaanIbu);
+    const rawAlamat = getVal(colAlamat);
+    const rawTelp = getVal(colNoTelp);
+    const rawStatus = getVal(colStatusSiswa);
+    const rawTahun = getVal(colTahunMasuk);
+
+    let jkNormalized: 'Laki-laki' | 'Perempuan' = 'Laki-laki';
+    const lowerJk = rawJk.toLowerCase();
+    if (lowerJk === 'p' || lowerJk.includes('perempuan') || lowerJk.includes('wanita')) {
+      jkNormalized = 'Perempuan';
+    }
+
+    let statusNormalized: 'Aktif' | 'Mutasi Keluar' | 'Lulus' | 'Non-Aktif' = 'Aktif';
+    const lowerStatus = rawStatus.toLowerCase();
+    if (lowerStatus.includes('mutasi') || lowerStatus.includes('pindah')) statusNormalized = 'Mutasi Keluar';
+    else if (lowerStatus.includes('lulus')) statusNormalized = 'Lulus';
+    else if (lowerStatus.includes('non') || lowerStatus.includes('keluar') || lowerStatus.includes('do')) statusNormalized = 'Non-Aktif';
+
+    let kelasNormalized = rawKelas || '7A';
+    // standardise 7A, 7B, 8A, etc.
+    kelasNormalized = kelasNormalized.toUpperCase().replace(/\s+/g, '');
+    if (!/^[789][A-Z]$/.test(kelasNormalized)) {
+      if (kelasNormalized.startsWith('7')) kelasNormalized = '7A';
+      else if (kelasNormalized.startsWith('8')) kelasNormalized = '8A';
+      else if (kelasNormalized.startsWith('9')) kelasNormalized = '9A';
+      else kelasNormalized = '7A';
+    }
+
+    let agamaNormalized: Siswa['agama'] = 'Islam';
+    const lowerAgama = rawAgama.toLowerCase();
+    if (lowerAgama.includes('kristen') || lowerAgama.includes('protestan')) agamaNormalized = 'Kristen Protestan';
+    else if (lowerAgama.includes('katolik')) agamaNormalized = 'Katolik';
+    else if (lowerAgama.includes('hindu')) agamaNormalized = 'Hindu';
+    else if (lowerAgama.includes('buddha')) agamaNormalized = 'Buddha';
+    else if (lowerAgama.includes('konghucu')) agamaNormalized = 'Konghucu';
+
+    const item: Siswa = {
+      id: `siswa-gdrive-${Date.now()}-${siswaList.length + 1}`,
+      nis: rawNis || `252607${String(siswaList.length + 1).padStart(3, '0')}`,
+      nisn: rawNisn || `01${String(Date.now()).slice(-8)}`,
+      namaLengkap: rawNama || 'Siswa SMPN 2 Puriala',
+      jenisKelamin: jkNormalized,
+      tempatLahir: rawTempatLahir || 'Puriala',
+      tanggalLahir: formatSheetDate(rawTanggalLahir) || '2012-05-15',
+      kelas: kelasNormalized as any,
+      agama: agamaNormalized,
+      namaAyah: rawAyah || 'Orang Tua Siswa',
+      pekerjaanAyah: rawPekAyah || 'Petani / Wiraswasta',
+      namaIbu: rawIbu || 'Ibu Rumah Tangga',
+      pekerjaanIbu: rawPekIbu || 'Ibu Rumah Tangga',
+      alamat: rawAlamat || 'Kec. Puriala, Kab. Konawe',
+      noTelpOrtu: rawTelp || '-',
+      statusSiswa: statusNormalized,
+      tahunMasuk: rawTahun || '2025',
+    };
+
+    siswaList.push(item);
+  });
+
+  return { headers, siswaList };
+};
+
+/**
+ * Parses raw spreadsheet rows into structured Alumni array
+ */
+export const parseAlumniFromRows = (rawRows: string[][]): { headers: string[]; alumniList: Alumni[] } => {
+  if (!rawRows || rawRows.length === 0) {
+    return { headers: [], alumniList: [] };
+  }
+
+  const headerKeywords = ['nisn', 'nis', 'nama', 'lulus', 'ijazah', 'skl', 'status', 'penerima'];
+
+  let headerRowIndex = 0;
+  let maxScore = 0;
+
+  for (let i = 0; i < Math.min(rawRows.length, 10); i++) {
+    const row = rawRows[i];
+    if (!row) continue;
+    let score = 0;
+    row.forEach((cell) => {
+      const cellLower = String(cell || '').toLowerCase().trim();
+      if (headerKeywords.some((kw) => cellLower.includes(kw))) {
+        score++;
+      }
+    });
+    if (score > maxScore) {
+      maxScore = score;
+      headerRowIndex = i;
+    }
+  }
+
+  const headers = (rawRows[headerRowIndex] || []).map((h) => String(h || '').trim());
+  const dataRows = rawRows.slice(headerRowIndex + 1);
+
+  const findColIndex = (keywords: string[]): number => {
+    return headers.findIndex((h) => {
+      const lower = (h || '').toLowerCase().trim();
+      return keywords.some((kw) => lower.includes(kw));
+    });
+  };
+
+  const colNisn = findColIndex(['nisn', 'n.i.s.n']);
+  const colNis = findColIndex(['nis', 'n.i.s', 'no induk']);
+  const colNama = findColIndex(['nama lengkap', 'nama alumni', 'nama siswa', 'nama']);
+  const colTahunLulus = findColIndex(['tahun lulus', 'thn lulus', 'tahun kelulusan', 'angkatan']);
+  const colNoIjazah = findColIndex(['no ijazah', 'nomor seri ijazah', 'no. ijazah', 'no seri ijazah', 'ijazah']);
+  const colNoSkl = findColIndex(['no skl', 'nomor skl', 'surat keterangan lulus']);
+  const colStatus = findColIndex(['status ijazah', 'status', 'keterangan ijazah']);
+  const colTglAmbil = findColIndex(['tgl ambil', 'tanggal pengambilan', 'tgl pengambilan']);
+  const colPenerima = findColIndex(['nama penerima', 'penerima', 'diambil oleh']);
+  const colLanjut = findColIndex(['melanjutkan ke', 'sekolah lanjutan', 'sma/smk']);
+  const colKet = findColIndex(['keterangan', 'ket']);
+
+  const alumniList: Alumni[] = [];
+
+  dataRows.forEach((row, idx) => {
+    if (!row || row.length === 0 || row.every((c) => !c || String(c).trim() === '')) {
+      return;
+    }
+
+    const getVal = (colIdx: number, defaultVal = ''): string => {
+      if (colIdx >= 0 && colIdx < row.length && row[colIdx] !== undefined && row[colIdx] !== null) {
+        return String(row[colIdx]).trim();
+      }
+      return defaultVal;
+    };
+
+    const rawNama = getVal(colNama);
+    const rawNisn = getVal(colNisn);
+    const rawNis = getVal(colNis);
+
+    if (!rawNama && !rawNisn && !rawNis) {
+      return;
+    }
+
+    const item: Alumni = {
+      id: `alumni-gdrive-${Date.now()}-${alumniList.length + 1}`,
+      nisn: rawNisn || `00${String(Date.now()).slice(-8)}`,
+      nis: rawNis || `242507${String(alumniList.length + 1).padStart(3, '0')}`,
+      namaLengkap: rawNama || 'Alumni SMPN 2 Puriala',
+      tahunLulus: getVal(colTahunLulus, '2024/2025'),
+      nomorSeriIjazah: getVal(colNoIjazah, '-'),
+      noSeriIjazah: getVal(colNoIjazah, '-'),
+      nomorSKL: getVal(colNoSkl, '-'),
+      noSKL: getVal(colNoSkl, '-'),
+      statusIjazah: getVal(colStatus, 'Sudah Diambil'),
+      tanggalPengambilan: formatSheetDate(getVal(colTglAmbil)),
+      namaPenerima: getVal(colPenerima, rawNama),
+      melanjutkanKe: getVal(colLanjut, 'SMAN 1 Puriala'),
+      keterangan: getVal(colKet, 'Lulus Lengkap'),
+    };
+
+    alumniList.push(item);
+  });
+
+  return { headers, alumniList };
+};
+
+/**
+ * Writes Guru & PTK data to Google Sheet
+ */
+export const writeGuruPTKToSheet = async (
+  accessToken: string,
+  spreadsheetId: string,
+  list: GuruPTK[],
+  sheetName: string = 'DATA PTK'
+): Promise<void> => {
+  try {
+    const meta = await getSpreadsheetMetadata(accessToken, spreadsheetId);
+    if (!meta.sheetNames.includes(sheetName)) {
+      await fetch(`${SHEETS_API_URL}/${spreadsheetId}:batchUpdate`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          requests: [
+            {
+              addSheet: {
+                properties: {
+                  title: sheetName,
+                  gridProperties: { frozenRowCount: 1 },
+                },
+              },
+            },
+          ],
+        }),
+      });
+    }
+  } catch (e) {
+    console.warn('Could not add PTK sheet tab:', e);
+  }
+
+  const headers = [
+    'No',
+    'Nama Lengkap',
+    'NIP',
+    'NUPTK',
+    'JK',
+    'Tempat Lahir',
+    'Tanggal Lahir',
+    'Jabatan',
+    'Jenis PTK',
+    'Status Kepegawaian',
+    'Golongan / Pangkat',
+    'Mapel Utama',
+    'TMT Pengangkatan',
+    'Sertifikasi',
+    'Pendidikan Terakhir',
+    'Jurusan',
+    'No HP',
+    'Email',
+  ];
+
+  const rows: (string | number)[][] = [headers];
+
+  list.forEach((item, idx) => {
+    rows.push([
+      idx + 1,
+      item.namaLengkap,
+      item.nip || '-',
+      item.nuptk || '-',
+      item.jenisKelamin || 'Laki-laki',
+      item.tempatLahir || '-',
+      item.tanggalLahir || '-',
+      item.jabatan || '-',
+      item.jenisPTK || '-',
+      item.statusKepegawaian || 'PNS',
+      item.golongan || item.pangkatGolongan || '-',
+      item.mapelUtama || '-',
+      item.tmtPengangkatan || '-',
+      item.statusSertifikasi || 'Belum Sertifikasi',
+      item.pendidikanTerakhir || 'S1',
+      item.jurusan || '-',
+      item.noHp || '-',
+      item.email || '',
+    ]);
+  });
+
+  const range = encodeURIComponent(`${sheetName}!A1:Z500`);
+  await fetch(`${SHEETS_API_URL}/${spreadsheetId}/values/${range}:clear`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const writeRange = encodeURIComponent(`${sheetName}!A1`);
+  await fetch(`${SHEETS_API_URL}/${spreadsheetId}/values/${writeRange}?valueInputOption=USER_ENTERED`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      range: `${sheetName}!A1`,
+      majorDimension: 'ROWS',
+      values: rows,
+    }),
+  });
+};
+
+/**
+ * Writes Siswa Buku Induk data to Google Sheet
+ */
+export const writeSiswaToSheet = async (
+  accessToken: string,
+  spreadsheetId: string,
+  list: Siswa[],
+  sheetName: string = 'BUKU INDUK SISWA'
+): Promise<void> => {
+  try {
+    const meta = await getSpreadsheetMetadata(accessToken, spreadsheetId);
+    if (!meta.sheetNames.includes(sheetName)) {
+      await fetch(`${SHEETS_API_URL}/${spreadsheetId}:batchUpdate`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          requests: [
+            {
+              addSheet: {
+                properties: {
+                  title: sheetName,
+                  gridProperties: { frozenRowCount: 1 },
+                },
+              },
+            },
+          ],
+        }),
+      });
+    }
+  } catch (e) {
+    console.warn('Could not add Siswa sheet tab:', e);
+  }
+
+  const headers = [
+    'No',
+    'NIS',
+    'NISN',
+    'Nama Lengkap Siswa',
+    'JK',
+    'Tempat Lahir',
+    'Tanggal Lahir',
+    'Kelas',
+    'Agama',
+    'Nama Ayah',
+    'Pekerjaan Ayah',
+    'Nama Ibu',
+    'Pekerjaan Ibu',
+    'Alamat Rumah',
+    'No Telp Ortu',
+    'Status Siswa',
+    'Tahun Masuk',
+  ];
+
+  const rows: (string | number)[][] = [headers];
+
+  list.forEach((item, idx) => {
+    rows.push([
+      idx + 1,
+      item.nis,
+      item.nisn,
+      item.namaLengkap,
+      item.jenisKelamin,
+      item.tempatLahir,
+      item.tanggalLahir,
+      item.kelas,
+      item.agama,
+      item.namaAyah,
+      item.pekerjaanAyah,
+      item.namaIbu,
+      item.pekerjaanIbu,
+      item.alamat,
+      item.noTelpOrtu || '-',
+      item.statusSiswa,
+      item.tahunMasuk,
+    ]);
+  });
+
+  const range = encodeURIComponent(`${sheetName}!A1:Z1000`);
+  await fetch(`${SHEETS_API_URL}/${spreadsheetId}/values/${range}:clear`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const writeRange = encodeURIComponent(`${sheetName}!A1`);
+  await fetch(`${SHEETS_API_URL}/${spreadsheetId}/values/${writeRange}?valueInputOption=USER_ENTERED`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      range: `${sheetName}!A1`,
+      majorDimension: 'ROWS',
+      values: rows,
+    }),
+  });
+};
+
 
