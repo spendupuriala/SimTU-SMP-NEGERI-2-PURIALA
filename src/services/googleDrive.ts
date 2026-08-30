@@ -1,6 +1,6 @@
-import { DatabaseState, GuruPTK } from '../types';
-import { invalidateGoogleAuth } from './googleAuth';
-import { writeGuruPTKToSheet, parseGuruPTKFromRows } from './googleSheets';
+import { DatabaseState, GuruPTK, Siswa } from '../types';
+import { invalidateGoogleAuth, verifyGoogleAccessToken } from './googleAuth';
+import { writeGuruPTKToSheet, parseGuruPTKFromRows, writeSiswaToSheet, parseSiswaFromRows } from './googleSheets';
 
 export interface GoogleDriveFile {
   id: string;
@@ -338,6 +338,7 @@ export const findOrCreateSuratMasukUploadFolder = async (
 };
 
 let cachedSuratFolderId: string | null = null;
+let cachedSuratKeluarFolderId: string | null = null;
 
 /**
  * Find or Create folder path: TATA USAHA -> SURAT
@@ -387,6 +388,56 @@ export const findOrCreateSuratFolder = async (accessToken: string): Promise<stri
 };
 
 /**
+ * Find or Create folder path: TATA USAHA -> SURAT -> SURAT KELUAR (or 02_SURAT_KELUAR)
+ */
+export const findOrCreateSuratKeluarFolder = async (accessToken: string): Promise<string> => {
+  if (!accessToken) {
+    throw new Error('AUTH_EXPIRED: Token Google Drive kosong.');
+  }
+
+  if (cachedSuratKeluarFolderId) {
+    return cachedSuratKeluarFolderId;
+  }
+
+  try {
+    const suratFolderId = await findOrCreateSuratFolder(accessToken);
+
+    let suratKeluarFolderId: string | null = null;
+    const querySK = `(name = 'SURAT KELUAR' or name = '02_SURAT_KELUAR' or name = 'SURAT-KELUAR' or name = 'SURAT_KELUAR') and '${suratFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const resSK = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: querySK, fields: 'files(id, name)' }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    if (resSK.status === 401) {
+      invalidateGoogleAuth();
+      throw new Error('AUTH_EXPIRED');
+    }
+
+    if (resSK.ok) {
+      const dataSK = await resSK.json();
+      if (dataSK.files && dataSK.files.length > 0) {
+        suratKeluarFolderId = dataSK.files[0].id;
+      }
+    }
+
+    if (!suratKeluarFolderId) {
+      suratKeluarFolderId = await createGoogleDriveFolder(accessToken, 'SURAT KELUAR', suratFolderId);
+    }
+
+    cachedSuratKeluarFolderId = suratKeluarFolderId;
+    return suratKeluarFolderId;
+  } catch (error: any) {
+    if (error?.message?.includes('AUTH_EXPIRED') || error?.message?.includes('invalid authentication credentials')) {
+      invalidateGoogleAuth();
+      throw error;
+    }
+    console.warn('Warning creating TATA USAHA/SURAT/SURAT KELUAR folder:', error?.message || error);
+    return findOrCreateSuratFolder(accessToken);
+  }
+};
+
+/**
  * Fetch all files / templates present in TATA USAHA/SURAT folder
  */
 export const fetchSuratFolderFiles = async (accessToken: string): Promise<GoogleDriveFile[]> => {
@@ -424,6 +475,132 @@ export const fetchSuratFolderFiles = async (accessToken: string): Promise<Google
     }
     console.warn('Could not fetch files from TATA USAHA/SURAT folder:', error?.message || error);
     return [];
+  }
+};
+
+/**
+ * Fetch all files / templates present in TATA USAHA/SURAT/SURAT KELUAR folder
+ */
+export const fetchSuratKeluarFolderFiles = async (accessToken: string): Promise<GoogleDriveFile[]> => {
+  if (!accessToken) return [];
+  try {
+    const suratKeluarFolderId = await findOrCreateSuratKeluarFolder(accessToken);
+    const query = `'${suratKeluarFolderId}' in parents and trashed = false`;
+    const params = new URLSearchParams({
+      q: query,
+      fields: 'files(id, name, mimeType, size, webViewLink, webContentLink, iconLink, createdTime, modifiedTime)',
+      orderBy: 'modifiedTime desc',
+      pageSize: '50',
+    });
+
+    const res = await fetch(`${DRIVE_API_URL}/files?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (res.status === 401) {
+      invalidateGoogleAuth();
+      return [];
+    }
+
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.files || []).map((file: any) => ({
+      ...file,
+      isFolder: file.mimeType === 'application/vnd.google-apps.folder',
+      size: file.size ? formatBytes(parseInt(file.size, 10)) : '-',
+    }));
+  } catch (error: any) {
+    if (error?.message?.includes('AUTH_EXPIRED') || error?.message?.includes('invalid authentication credentials')) {
+      invalidateGoogleAuth();
+      return [];
+    }
+    console.warn('Could not fetch files from TATA USAHA/SURAT/SURAT KELUAR folder:', error?.message || error);
+    return [];
+  }
+};
+
+/**
+ * Find master template file "SPPD" (Sheet "SPPD HAL-1" & "SPPD HAL-2") in Google Drive folder TATA USAHA/SURAT/SURAT KELUAR
+ */
+export const findSPPDTemplateInDrive = async (accessToken: string): Promise<GoogleDriveFile | null> => {
+  if (!accessToken) return null;
+  try {
+    const suratKeluarFolderId = await findOrCreateSuratKeluarFolder(accessToken);
+
+    // 1. Search in TATA USAHA/SURAT/SURAT KELUAR folder first for "SPPD"
+    const queryInSK = `'${suratKeluarFolderId}' in parents and (name = 'SPPD' or name contains 'SPPD') and trashed = false`;
+    const resInSK = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({
+        q: queryInSK,
+        fields: 'files(id, name, mimeType, size, webViewLink, webContentLink, iconLink, modifiedTime)',
+        pageSize: '10',
+      }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    if (resInSK.ok) {
+      const dataInSK = await resInSK.json();
+      if (dataInSK.files && dataInSK.files.length > 0) {
+        const found = dataInSK.files[0];
+        return {
+          ...found,
+          isFolder: found.mimeType === 'application/vnd.google-apps.folder',
+          size: found.size ? formatBytes(parseInt(found.size, 10)) : '-',
+        };
+      }
+    }
+
+    // 2. Search in TATA USAHA/SURAT folder
+    const suratFolderId = await findOrCreateSuratFolder(accessToken);
+    const queryInSurat = `'${suratFolderId}' in parents and (name = 'SPPD' or name contains 'SPPD') and trashed = false`;
+    const resInSurat = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({
+        q: queryInSurat,
+        fields: 'files(id, name, mimeType, size, webViewLink, webContentLink, iconLink, modifiedTime)',
+        pageSize: '10',
+      }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    if (resInSurat.ok) {
+      const dataInSurat = await resInSurat.json();
+      if (dataInSurat.files && dataInSurat.files.length > 0) {
+        const found = dataInSurat.files[0];
+        return {
+          ...found,
+          isFolder: found.mimeType === 'application/vnd.google-apps.folder',
+          size: found.size ? formatBytes(parseInt(found.size, 10)) : '-',
+        };
+      }
+    }
+
+    // 3. Global search for "SPPD"
+    const queryGlobal = `(name = 'SPPD' or name contains 'SPPD') and trashed = false`;
+    const resGlobal = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({
+        q: queryGlobal,
+        fields: 'files(id, name, mimeType, size, webViewLink, webContentLink, iconLink, modifiedTime)',
+        pageSize: '5',
+      }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    if (resGlobal.ok) {
+      const dataGlobal = await resGlobal.json();
+      if (dataGlobal.files && dataGlobal.files.length > 0) {
+        const found = dataGlobal.files[0];
+        return {
+          ...found,
+          isFolder: found.mimeType === 'application/vnd.google-apps.folder',
+          size: found.size ? formatBytes(parseInt(found.size, 10)) : '-',
+        };
+      }
+    }
+
+    return null;
+  } catch (error: any) {
+    console.warn('Could not find SPPD template in Drive:', error?.message || error);
+    return null;
   }
 };
 
@@ -699,14 +876,22 @@ export const findOrCreateTataUsahaFolder = async (
       try {
         await createGoogleDriveFolder(accessToken, sub, newFolderId);
       } catch (e) {
-        console.warn(`Could not create subfolder ${sub}:`, e);
+        // Non-critical subfolder creation
       }
     }
 
     return newFolderId;
   } catch (error: any) {
-    if (error?.message?.includes('AUTH_EXPIRED') || error?.message?.includes('invalid authentication credentials')) {
+    if (
+      error?.message?.includes('AUTH_EXPIRED') ||
+      error?.message?.includes('invalid authentication credentials') ||
+      error?.message?.includes('401')
+    ) {
       invalidateGoogleAuth();
+      throw error;
+    }
+    // If it is a fetch / network error, do not recurse into another failing fetch
+    if (error?.name === 'TypeError' || error?.message?.includes('Failed to fetch')) {
       throw error;
     }
     console.warn('Warning finding/creating TATA USAHA folder:', error?.message || error);
@@ -771,61 +956,62 @@ export const syncLiveDatabaseToTataUsahaFolder = async (
     return { success: false, fileName: '', folderId: '', lastUpdated: '' };
   }
 
-  const folderId = await findOrCreateTataUsahaFolder(accessToken, 'TATA USAHA');
-  const masterFileName = 'SIPEDAS_DATABASE_TATA_USAHA.json';
-  const nowFormatted = new Date().toISOString();
+  try {
+    const folderId = await findOrCreateTataUsahaFolder(accessToken, 'TATA USAHA');
+    const masterFileName = 'SIPEDAS_DATABASE_TATA_USAHA.json';
+    const nowFormatted = new Date().toISOString();
 
-  // Enriched payload with metadata
-  const payload = {
-    _lastSync: nowFormatted,
-    _syncTarget: 'GOOGLE_DRIVE_FOLDER_TATA_USAHA',
-    _version: '1.0',
-    totalSuratMasuk: dbState.suratMasuk?.length || 0,
-    totalSuratKeluar: dbState.suratKeluar?.length || 0,
-    totalGuruPTK: dbState.guruPTK?.length || 0,
-    totalSiswa: dbState.siswa?.length || 0,
-    data: dbState,
-  };
+    // Enriched payload with metadata
+    const payload = {
+      _lastSync: nowFormatted,
+      _syncTarget: 'GOOGLE_DRIVE_FOLDER_TATA_USAHA',
+      _version: '1.0',
+      totalSuratMasuk: dbState.suratMasuk?.length || 0,
+      totalSuratKeluar: dbState.suratKeluar?.length || 0,
+      totalGuruPTK: dbState.guruPTK?.length || 0,
+      totalSiswa: dbState.siswa?.length || 0,
+      data: dbState,
+    };
 
-  const jsonString = JSON.stringify(payload, null, 2);
-  const blob = new Blob([jsonString], { type: 'application/json' });
+    const jsonString = JSON.stringify(payload, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json' });
 
-  // 1. Check if master file already exists in TATA USAHA folder
-  const checkQuery = `name = '${masterFileName}' and '${folderId}' in parents and trashed = false`;
-  const checkParams = new URLSearchParams({ q: checkQuery, fields: 'files(id, name)' });
+    // 1. Check if master file already exists in TATA USAHA folder
+    const checkQuery = `name = '${masterFileName}' and '${folderId}' in parents and trashed = false`;
+    const checkParams = new URLSearchParams({ q: checkQuery, fields: 'files(id, name)' });
 
-  const searchRes = await fetch(`${DRIVE_API_URL}/files?${checkParams.toString()}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+    const searchRes = await fetch(`${DRIVE_API_URL}/files?${checkParams.toString()}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
 
-  if (searchRes.status === 401) {
-    invalidateGoogleAuth();
-    throw new Error('AUTH_EXPIRED: Token Google Drive kedaluwarsa.');
-  }
-
-  let existingFileId: string | null = null;
-  if (searchRes.ok) {
-    const searchData = await searchRes.json();
-    if (searchData.files && searchData.files.length > 0) {
-      existingFileId = searchData.files[0].id;
+    if (searchRes.status === 401) {
+      invalidateGoogleAuth();
+      throw new Error('AUTH_EXPIRED: Token Google Drive kedaluwarsa.');
     }
-  }
 
-  // 2. If exists, update content in place; if not, upload new file
-  if (existingFileId) {
-    const updated = await updateFileInGoogleDrive(accessToken, existingFileId, blob, 'application/json');
-    if (!updated) {
-      // If patch failed, upload fresh copy
+    let existingFileId: string | null = null;
+    if (searchRes.ok) {
+      const searchData = await searchRes.json();
+      if (searchData.files && searchData.files.length > 0) {
+        existingFileId = searchData.files[0].id;
+      }
+    }
+
+    // 2. If exists, update content in place; if not, upload new file
+    if (existingFileId) {
+      const updated = await updateFileInGoogleDrive(accessToken, existingFileId, blob, 'application/json');
+      if (!updated) {
+        // If patch failed, upload fresh copy
+        await uploadFileToGoogleDrive(accessToken, blob, masterFileName, 'application/json', folderId);
+      }
+    } else {
       await uploadFileToGoogleDrive(accessToken, blob, masterFileName, 'application/json', folderId);
     }
-  } else {
-    await uploadFileToGoogleDrive(accessToken, blob, masterFileName, 'application/json', folderId);
-  }
 
-  // 3. Also write a human-readable quick summary file
-  try {
-    const summaryFileName = 'RINGKASAN_DATA_TATA_USAHA.txt';
-    const summaryText = `=====================================================
+    // 3. Also write a human-readable quick summary file
+    try {
+      const summaryFileName = 'RINGKASAN_DATA_TATA_USAHA.txt';
+      const summaryText = `=====================================================
 SIPEDAS SMPN 2 PURIALA - SINKRONISASI OTOMATIS TATA USAHA
 =====================================================
 Waktu Sinkronisasi : ${new Date().toLocaleString('id-ID')}
@@ -844,31 +1030,50 @@ RINCIAN DATA REAL-TIME:
 
 Semua perubahan data pada aplikasi SIPEDAS otomatis diperbarui ke folder ini.
 =====================================================`;
-    const summaryBlob = new Blob([summaryText], { type: 'text/plain;charset=utf-8' });
+      const summaryBlob = new Blob([summaryText], { type: 'text/plain;charset=utf-8' });
 
-    // Check summary file
-    const sumQuery = `name = '${summaryFileName}' and '${folderId}' in parents and trashed = false`;
-    const sumRes = await fetch(`${DRIVE_API_URL}/files?${new URLSearchParams({ q: sumQuery, fields: 'files(id)' }).toString()}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (sumRes.ok) {
-      const sumData = await sumRes.json();
-      if (sumData.files && sumData.files.length > 0) {
-        await updateFileInGoogleDrive(accessToken, sumData.files[0].id, summaryBlob, 'text/plain');
-      } else {
-        await uploadFileToGoogleDrive(accessToken, summaryBlob, summaryFileName, 'text/plain', folderId);
+      // Check summary file
+      const sumQuery = `name = '${summaryFileName}' and '${folderId}' in parents and trashed = false`;
+      const sumRes = await fetch(`${DRIVE_API_URL}/files?${new URLSearchParams({ q: sumQuery, fields: 'files(id)' }).toString()}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (sumRes.ok) {
+        const sumData = await sumRes.json();
+        if (sumData.files && sumData.files.length > 0) {
+          await updateFileInGoogleDrive(accessToken, sumData.files[0].id, summaryBlob, 'text/plain');
+        } else {
+          await uploadFileToGoogleDrive(accessToken, summaryBlob, summaryFileName, 'text/plain', folderId);
+        }
       }
+    } catch (e) {
+      // Non-critical summary file error
     }
-  } catch (e) {
-    console.warn('Could not write summary file:', e);
-  }
 
-  return {
-    success: true,
-    fileName: masterFileName,
-    folderId,
-    lastUpdated: nowFormatted,
-  };
+    return {
+      success: true,
+      fileName: masterFileName,
+      folderId,
+      lastUpdated: nowFormatted,
+    };
+  } catch (error: any) {
+    if (
+      error?.message?.includes('AUTH_EXPIRED') ||
+      error?.message?.includes('invalid authentication credentials') ||
+      error?.message?.includes('401')
+    ) {
+      invalidateGoogleAuth();
+      throw error;
+    }
+    // If it's a network fetch error (e.g. Failed to fetch), verify token validity asynchronously
+    if (error?.name === 'TypeError' || error?.message?.includes('Failed to fetch') || error?.message?.includes('network')) {
+      verifyGoogleAccessToken(accessToken).then((isValid) => {
+        if (!isValid) {
+          invalidateGoogleAuth();
+        }
+      }).catch(() => {});
+    }
+    throw error;
+  }
 };
 
 /**
@@ -1107,6 +1312,193 @@ export const uploadGuruBerkasToDrive = async (
     folderId,
     folderName,
     mimeType,
+  };
+};
+
+/**
+ * Infer berkas category from filename
+ */
+export function inferJenisBerkasFromFileName(fileName: string): string {
+  const fn = (fileName || '').toLowerCase();
+  if (fn.includes('pangkat') || fn.includes('golongan') || fn.includes('kgb')) return 'SK Pangkat / Kenaikan Golongan';
+  if (fn.includes('cpns') || fn.includes('pns') || fn.includes('pppk') || fn.includes('pengangkatan')) return 'SK CPNS / PNS / PPPK';
+  if (fn.includes('ijazah') || fn.includes('transkrip') || fn.includes('diploma') || fn.includes('sarjana') || fn.includes('magister')) return 'Ijazah & Transkrip Terakhir';
+  if (fn.includes('serdik') || fn.includes('sertifikat pendidik') || fn.includes('sertifikasi') || fn.includes('nrg')) return 'Sertifikat Pendidik (Serdik)';
+  if (fn.includes('ktp') || fn.includes('kartu keluarga') || fn.includes('kk') || fn.includes('karpeg') || fn.includes('taspen') || fn.includes('bpjs')) return 'KTP / KK / Karpeg / Kartu Taspen';
+  if (fn.includes('sk pembagian') || fn.includes('tugas') || fn.includes('mutasi') || fn.includes('skbm') || fn.includes('roster')) return 'SK Pembagian Tugas / SK Mutasi';
+  if (fn.includes('pelatihan') || fn.includes('diklat') || fn.includes('workshop') || fn.includes('seminar') || fn.includes('bimtek')) return 'Sertifikat Pelatihan / Diklat / Workshop';
+  if (fn.includes('skp') || fn.includes('kinerja') || fn.includes('pkg') || fn.includes('penilaian')) return 'Penilaian Kinerja Guru & SKP';
+  if (fn.includes('gaji') || fn.includes('berkala')) return 'Kenaikan Gaji Berkala (KGB)';
+  return 'Dokumen Lainnya';
+}
+
+/**
+ * Scan Google Drive folder TATA USAHA/04_KEPEGAWAIAN_PTK
+ * Automatically matches subfolders with Guru & PTK names and reads files inside each folder
+ * to accurately determine the count and file list of digital documents per teacher.
+ */
+export const scanAllGuruBerkasFromDrive = async (
+  accessToken: string,
+  currentGuruList: GuruPTK[]
+): Promise<{
+  success: boolean;
+  data: GuruPTK[];
+  totalFilesFound: number;
+  matchedFoldersCount: number;
+  folderId: string;
+}> => {
+  if (!accessToken) {
+    throw new Error('AUTH_EXPIRED: Token Google Drive kosong.');
+  }
+
+  const ptkFolderId = await findOrCreatePTKFolder(accessToken);
+
+  // 1. Fetch all subfolders inside TATA USAHA/04_KEPEGAWAIAN_PTK
+  const folderQuery = `'${ptkFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  const folderRes = await fetch(
+    `${DRIVE_API_URL}/files?${new URLSearchParams({
+      q: folderQuery,
+      fields: 'files(id, name, createdTime, modifiedTime)',
+      pageSize: '100',
+    }).toString()}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+
+  if (folderRes.status === 401) {
+    invalidateGoogleAuth();
+    throw new Error('AUTH_EXPIRED: Token Google Drive kedaluwarsa.');
+  }
+
+  if (!folderRes.ok) {
+    throw new Error(`Gagal membaca folder 04_KEPEGAWAIAN_PTK (${folderRes.status})`);
+  }
+
+  const folderData = await folderRes.json();
+  const subfolders: Array<{ id: string; name: string }> = folderData.files || [];
+
+  if (subfolders.length === 0) {
+    return {
+      success: true,
+      data: currentGuruList,
+      totalFilesFound: 0,
+      matchedFoldersCount: 0,
+      folderId: ptkFolderId,
+    };
+  }
+
+  // 2. Helper to clean and match names
+  const cleanNameForMatch = (name: string) => {
+    return (name || '')
+      .toLowerCase()
+      .replace(/^(drs\.|dra\.|dr\.|prof\.|h\.|hj\.|ust\.)\s*/gi, '')
+      .replace(/,\s*(s\.pd|m\.pd|s\.kom|m\.kom|s\.ag|m\.ag|s\.si|m\.si|s\.t|m\.t|s\.sos|m\.ap|s\.e|m\.m|gr\.)/gi, '')
+      .replace(/[^a-z0-9]/g, ' ')
+      .trim();
+  };
+
+  let totalFilesFound = 0;
+  let matchedFoldersCount = 0;
+
+  // 3. For each teacher, find their matching folder and get files
+  const updatedGuruList: GuruPTK[] = await Promise.all(
+    currentGuruList.map(async (guru) => {
+      const cleanNip = (guru.nip || '').replace(/\D/g, '');
+      const cleanNama = cleanNameForMatch(guru.namaLengkap);
+      const nameParts = cleanNama.split(/\s+/).filter((p) => p.length >= 3);
+
+      // Find matching folder
+      const matchedFolder = subfolders.find((f) => {
+        const fName = (f.name || '').toLowerCase();
+        const fCleanName = cleanNameForMatch(f.name);
+        const fNip = (f.name || '').replace(/\D/g, '');
+
+        // Match 1: NIP match (>= 8 digits)
+        if (cleanNip.length >= 8 && fNip.includes(cleanNip)) {
+          return true;
+        }
+
+        // Match 2: Exact cleaned name match
+        if (cleanNama.length >= 4 && fCleanName.includes(cleanNama)) {
+          return true;
+        }
+
+        // Match 3: Keyword name parts match (e.g. "Syarifuddin")
+        if (nameParts.length > 0 && nameParts.some((part) => fName.includes(part))) {
+          return true;
+        }
+
+        return false;
+      });
+
+      if (!matchedFolder) {
+        return guru;
+      }
+
+      matchedFoldersCount++;
+
+      // Fetch files inside the teacher's folder
+      try {
+        const fileQuery = `'${matchedFolder.id}' in parents and trashed = false and mimeType != 'application/vnd.google-apps.folder'`;
+        const fileRes = await fetch(
+          `${DRIVE_API_URL}/files?${new URLSearchParams({
+            q: fileQuery,
+            fields: 'files(id, name, size, mimeType, modifiedTime, createdTime, webViewLink, thumbnailLink)',
+            pageSize: '100',
+            orderBy: 'modifiedTime desc',
+          }).toString()}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+
+        if (!fileRes.ok) {
+          return guru;
+        }
+
+        const fileData = await fileRes.json();
+        const driveFiles: any[] = fileData.files || [];
+        totalFilesFound += driveFiles.length;
+
+        // Convert drive files into BerkasDigitalItem array
+        const scannedBerkas = driveFiles.map((df) => {
+          const isPdf = df.mimeType === 'application/pdf' || df.name.toLowerCase().endsWith('.pdf');
+          const isImage = df.mimeType?.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif)$/i.test(df.name);
+          const sizeNumber = Number(df.size) || 0;
+
+          return {
+            id: df.id,
+            namaFile: df.name,
+            jenisBerkas: inferJenisBerkasFromFileName(df.name),
+            ukuran: sizeNumber > 0 ? formatBytes(sizeNumber) : 'File Drive',
+            tanggalUnggah: df.modifiedTime ? df.modifiedTime.split('T')[0] : new Date().toISOString().split('T')[0],
+            driveFileId: df.id,
+            driveWebViewLink: df.webViewLink || `https://drive.google.com/file/d/${df.id}/view`,
+            folderId: matchedFolder.id,
+            folderName: matchedFolder.name,
+            mimeType: df.mimeType || (isPdf ? 'application/pdf' : isImage ? 'image/jpeg' : 'application/octet-stream'),
+          };
+        });
+
+        // Merge with any existing local-only berkas if not duplicated
+        const existingLocal = (guru.berkasDigital || []).filter(
+          (b) => !b.driveFileId && !scannedBerkas.some((sb) => sb.namaFile === b.namaFile)
+        );
+
+        return {
+          ...guru,
+          berkasDigital: [...scannedBerkas, ...existingLocal],
+        };
+      } catch (err) {
+        console.warn(`Error scanning folder ${matchedFolder.name}:`, err);
+        return guru;
+      }
+    })
+  );
+
+  return {
+    success: true,
+    data: updatedGuruList,
+    totalFilesFound,
+    matchedFoldersCount,
+    folderId: ptkFolderId,
   };
 };
 
@@ -1408,6 +1800,333 @@ export const loadGuruPTKDataFromDrive = async (
 };
 
 /**
+ * Cache for Kesiswaan & Alumni Folder ID
+ */
+let cachedKesiswaanFolderId: string | null = null;
+
+/**
+ * Find or Create folder path: TATA USAHA -> 05_KESISWAAN_DAN_ALUMNI
+ */
+export const findOrCreateKesiswaanFolder = async (accessToken: string): Promise<string> => {
+  if (!accessToken) {
+    throw new Error('AUTH_EXPIRED: Token Google Drive kosong.');
+  }
+
+  if (cachedKesiswaanFolderId) {
+    return cachedKesiswaanFolderId;
+  }
+
+  try {
+    const tataUsahaFolderId = await findOrCreateTataUsahaFolder(accessToken, 'TATA USAHA');
+
+    let kesiswaanFolderId: string | null = null;
+    const queryKesiswaan = `(name = '05_KESISWAAN_DAN_ALUMNI' or name = 'KESISWAAN_DAN_ALUMNI' or name = '05_KESISWAAN' or name = 'KESISWAAN' or name = 'BUKU_INDUK_SISWA') and '${tataUsahaFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const resKesiswaan = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: queryKesiswaan, fields: 'files(id, name)' }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    if (resKesiswaan.status === 401) {
+      invalidateGoogleAuth();
+      throw new Error('AUTH_EXPIRED');
+    }
+
+    if (resKesiswaan.ok) {
+      const dataKesiswaan = await resKesiswaan.json();
+      if (dataKesiswaan.files && dataKesiswaan.files.length > 0) {
+        kesiswaanFolderId = dataKesiswaan.files[0].id;
+      }
+    }
+
+    if (!kesiswaanFolderId) {
+      kesiswaanFolderId = await createGoogleDriveFolder(accessToken, '05_KESISWAAN_DAN_ALUMNI', tataUsahaFolderId);
+    }
+
+    cachedKesiswaanFolderId = kesiswaanFolderId;
+    return kesiswaanFolderId;
+  } catch (error: any) {
+    if (error?.message?.includes('AUTH_EXPIRED') || error?.message?.includes('invalid authentication credentials')) {
+      invalidateGoogleAuth();
+      throw error;
+    }
+    console.warn('Warning creating TATA USAHA/05_KESISWAAN_DAN_ALUMNI folder:', error?.message || error);
+    return findOrCreateTataUsahaFolder(accessToken);
+  }
+};
+
+/**
+ * Save & sync Buku Induk Siswa data into Google Drive folder TATA USAHA/05_KESISWAAN_DAN_ALUMNI
+ * with exact file name "BUKU_INDUK_SISWA_DAN_ALUMNI" (Google Sheets preserving table structure & JSON backup)
+ */
+export const saveBukuIndukDataToDrive = async (
+  accessToken: string,
+  siswaList: Siswa[]
+): Promise<{ success: boolean; fileId: string; fileName: string; folderId: string; lastUpdated: string }> => {
+  if (!accessToken) {
+    throw new Error('AUTH_EXPIRED: Token Google Drive kosong.');
+  }
+
+  const kesiswaanFolderId = await findOrCreateKesiswaanFolder(accessToken);
+  const nowFormatted = new Date().toISOString();
+
+  // 1. Check if a Google Spreadsheet named "BUKU_INDUK_SISWA_DAN_ALUMNI" exists in the folder
+  const checkSheetQuery = `mimeType = 'application/vnd.google-apps.spreadsheet' and (name = 'BUKU_INDUK_SISWA_DAN_ALUMNI' or name = 'BUKU_INDUK_SISWA' or name = 'BUKU INDUK SISWA DAN ALUMNI' or name = 'BUKU INDUK SISWA') and '${kesiswaanFolderId}' in parents and trashed = false`;
+  let existingSheetId: string | null = null;
+
+  try {
+    const sheetSearchRes = await fetch(`${DRIVE_API_URL}/files?${new URLSearchParams({ q: checkSheetQuery, fields: 'files(id, name)' }).toString()}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (sheetSearchRes.ok) {
+      const sheetData = await sheetSearchRes.json();
+      if (sheetData.files && sheetData.files.length > 0) {
+        existingSheetId = sheetData.files[0].id;
+        // Non-destructive write: preserves template header styles, fonts, and borders without changing table structure
+        await writeSiswaToSheet(accessToken, existingSheetId, siswaList, 'BUKU INDUK SISWA');
+      }
+    }
+  } catch (sheetErr) {
+    console.warn('Could not sync to existing Google Spreadsheet (will attempt create or fallback):', sheetErr);
+  }
+
+  // If no spreadsheet exists yet, create the Google Spreadsheet named "BUKU_INDUK_SISWA_DAN_ALUMNI"
+  if (!existingSheetId) {
+    try {
+      const createSheetRes = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          properties: {
+            title: 'BUKU_INDUK_SISWA_DAN_ALUMNI',
+          },
+          sheets: [
+            {
+              properties: {
+                title: 'BUKU INDUK SISWA',
+                gridProperties: {
+                  frozenRowCount: 1,
+                },
+              },
+            },
+          ],
+        }),
+      });
+
+      if (createSheetRes.ok) {
+        const createdSheet = await createSheetRes.json();
+        existingSheetId = createdSheet.spreadsheetId;
+
+        // Move to 05_KESISWAAN_DAN_ALUMNI folder
+        await fetch(`${DRIVE_API_URL}/files/${existingSheetId}?addParents=${kesiswaanFolderId}&fields=id,parents`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+
+        // Write 2D array data
+        await writeSiswaToSheet(accessToken, existingSheetId, siswaList, 'BUKU INDUK SISWA');
+      }
+    } catch (createErr) {
+      console.warn('Could not create new Google Spreadsheet:', createErr);
+    }
+  }
+
+  // 2. Also save/update the JSON redundancy file in TATA USAHA/05_KESISWAAN_DAN_ALUMNI
+  const fileName = 'BUKU_INDUK_SISWA_DAN_ALUMNI.json';
+  const payload = {
+    _title: 'BUKU INDUK SISWA & PESERTA DIDIK',
+    _folder: 'TATA USAHA/05_KESISWAAN_DAN_ALUMNI',
+    _fileName: 'BUKU_INDUK_SISWA_DAN_ALUMNI',
+    _lastSync: nowFormatted,
+    _totalSiswa: siswaList.length,
+    _school: 'SMP NEGERI 2 PURIALA',
+    daftarSiswa: siswaList,
+    siswa: siswaList,
+  };
+
+  const jsonString = JSON.stringify(payload, null, 2);
+  const blob = new Blob([jsonString], { type: 'application/json' });
+
+  // Check if file exists in 05_KESISWAAN_DAN_ALUMNI folder
+  const checkQuery = `(name = '${fileName}' or name = 'BUKU_INDUK_SISWA_DAN_ALUMNI' or name = 'BUKU_INDUK_SISWA.json') and '${kesiswaanFolderId}' in parents and trashed = false`;
+  const checkParams = new URLSearchParams({ q: checkQuery, fields: 'files(id, name)' });
+
+  const searchRes = await fetch(`${DRIVE_API_URL}/files?${checkParams.toString()}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (searchRes.status === 401) {
+    invalidateGoogleAuth();
+    throw new Error('AUTH_EXPIRED: Token Google Drive kedaluwarsa.');
+  }
+
+  let existingJsonFileId: string | null = null;
+  if (searchRes.ok) {
+    const searchData = await searchRes.json();
+    if (searchData.files && searchData.files.length > 0) {
+      existingJsonFileId = searchData.files[0].id;
+    }
+  }
+
+  let finalJsonFileId = existingJsonFileId;
+  if (existingJsonFileId) {
+    const updated = await updateFileInGoogleDrive(accessToken, existingJsonFileId, blob, 'application/json');
+    if (!updated) {
+      const up = await uploadFileToGoogleDrive(accessToken, blob, fileName, 'application/json', kesiswaanFolderId);
+      finalJsonFileId = up.id;
+    }
+  } else {
+    const up = await uploadFileToGoogleDrive(accessToken, blob, fileName, 'application/json', kesiswaanFolderId);
+    finalJsonFileId = up.id;
+  }
+
+  return {
+    success: true,
+    fileId: existingSheetId || finalJsonFileId || '',
+    fileName: 'BUKU_INDUK_SISWA_DAN_ALUMNI',
+    folderId: kesiswaanFolderId,
+    lastUpdated: nowFormatted,
+  };
+};
+
+/**
+ * Load Buku Induk Siswa from Google Drive folder TATA USAHA/05_KESISWAAN_DAN_ALUMNI
+ * Searches for "BUKU_INDUK_SISWA_DAN_ALUMNI" (Google Sheets or JSON)
+ */
+export const loadBukuIndukDataFromDrive = async (
+  accessToken: string
+): Promise<{ success: boolean; data: Siswa[]; sourceName: string; sourceFolder: string }> => {
+  if (!accessToken) {
+    throw new Error('AUTH_EXPIRED: Token Google Drive kosong.');
+  }
+
+  const kesiswaanFolderId = await findOrCreateKesiswaanFolder(accessToken);
+
+  // 1. Search inside 05_KESISWAAN_DAN_ALUMNI folder first
+  const queryInFolder = `'${kesiswaanFolderId}' in parents and trashed = false and (name contains 'BUKU_INDUK_SISWA_DAN_ALUMNI' or name contains 'BUKU INDUK SISWA' or name contains 'BUKU_INDUK' or name contains 'SISWA')`;
+  const resInFolder = await fetch(
+    `${DRIVE_API_URL}/files?${new URLSearchParams({
+      q: queryInFolder,
+      fields: 'files(id, name, mimeType, webViewLink)',
+      orderBy: 'modifiedTime desc',
+      pageSize: '20',
+    }).toString()}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+
+  if (resInFolder.status === 401) {
+    invalidateGoogleAuth();
+    throw new Error('AUTH_EXPIRED: Token Google Drive kedaluwarsa.');
+  }
+
+  let candidateFiles: any[] = [];
+  if (resInFolder.ok) {
+    candidateFiles = (await resInFolder.json()).files || [];
+  }
+
+  // 2. If nothing found in folder, search globally in Drive
+  if (candidateFiles.length === 0) {
+    const queryGlobal = `trashed = false and (name = 'BUKU_INDUK_SISWA_DAN_ALUMNI' or name = 'BUKU_INDUK_SISWA_DAN_ALUMNI.json' or name contains 'BUKU_INDUK_SISWA_DAN_ALUMNI')`;
+    const resGlobal = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({
+        q: queryGlobal,
+        fields: 'files(id, name, mimeType, webViewLink)',
+        orderBy: 'modifiedTime desc',
+        pageSize: '10',
+      }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (resGlobal.ok) {
+      candidateFiles = (await resGlobal.json()).files || [];
+    }
+  }
+
+  // Prioritize exact match "BUKU_INDUK_SISWA_DAN_ALUMNI"
+  candidateFiles.sort((a, b) => {
+    const aExact = a.name === 'BUKU_INDUK_SISWA_DAN_ALUMNI' || a.name === 'BUKU_INDUK_SISWA_DAN_ALUMNI.json' ? 1 : 0;
+    const bExact = b.name === 'BUKU_INDUK_SISWA_DAN_ALUMNI' || b.name === 'BUKU_INDUK_SISWA_DAN_ALUMNI.json' ? 1 : 0;
+    return bExact - aExact;
+  });
+
+  for (const file of candidateFiles) {
+    // A. If it's a Google Spreadsheet
+    if (file.mimeType === 'application/vnd.google-apps.spreadsheet') {
+      try {
+        const sheetMetaRes = await fetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${file.id}?fields=sheets(properties(sheetId,title))`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        if (sheetMetaRes.ok) {
+          const metaData = await sheetMetaRes.json();
+          const sheets = (metaData.sheets || []).map((s: any) => s.properties?.title || '');
+          const targetSheet = sheets.find((t: string) => {
+            const tl = t.toLowerCase();
+            return (
+              tl.includes('buku induk') ||
+              tl.includes('siswa') ||
+              tl.includes('data siswa') ||
+              tl.includes('peserta didik') ||
+              tl.includes('kesiswaan')
+            );
+          }) || sheets[0];
+
+          if (targetSheet) {
+            const valuesRes = await fetch(
+              `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/${encodeURIComponent(targetSheet)}!A1:Z2000`,
+              { headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+            if (valuesRes.ok) {
+              const valData = await valuesRes.json();
+              const rows: string[][] = valData.values || [];
+              if (rows.length >= 2) {
+                const parsed = parseSiswaFromRows(rows);
+                if (parsed.siswaList && parsed.siswaList.length > 0) {
+                  return {
+                    success: true,
+                    data: parsed.siswaList,
+                    sourceName: `${file.name} (${targetSheet})`,
+                    sourceFolder: 'TATA USAHA/05_KESISWAAN_DAN_ALUMNI',
+                  };
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn(`Error reading spreadsheet ${file.name}:`, e);
+      }
+    }
+
+    // B. If it's a JSON file
+    if (file.mimeType === 'application/json' || file.name.endsWith('.json')) {
+      try {
+        const fileContentRes = await fetch(`${DRIVE_API_URL}/files/${file.id}?alt=media`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (fileContentRes.ok) {
+          const parsed = await fileContentRes.json();
+          const list: Siswa[] = parsed.daftarSiswa || parsed.siswa || parsed.data || (Array.isArray(parsed) ? parsed : []);
+          if (Array.isArray(list) && list.length > 0) {
+            return {
+              success: true,
+              data: list,
+              sourceName: file.name,
+              sourceFolder: 'TATA USAHA/05_KESISWAAN_DAN_ALUMNI',
+            };
+          }
+        }
+      } catch (e) {
+        console.warn(`Error reading json file ${file.name}:`, e);
+      }
+    }
+  }
+
+  throw new Error('Tidak ditemukan berkas "BUKU_INDUK_SISWA_DAN_ALUMNI" di Google Drive folder TATA USAHA/05_KESISWAAN_DAN_ALUMNI.');
+};
+
+/**
  * Helper to format byte sizes into readable string
  */
 function formatBytes(bytes: number, decimals: number = 2): string {
@@ -1418,5 +2137,6 @@ function formatBytes(bytes: number, decimals: number = 2): string {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 }
+
 
 

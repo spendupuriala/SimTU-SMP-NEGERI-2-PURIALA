@@ -2084,14 +2084,20 @@ export const parseSiswaFromRows = (rawRows: string[][]): { headers: string[]; si
     else if (lowerStatus.includes('lulus')) statusNormalized = 'Lulus';
     else if (lowerStatus.includes('non') || lowerStatus.includes('keluar') || lowerStatus.includes('do')) statusNormalized = 'Non-Aktif';
 
-    let kelasNormalized = rawKelas || '7A';
-    // standardise 7A, 7B, 8A, etc.
-    kelasNormalized = kelasNormalized.toUpperCase().replace(/\s+/g, '');
-    if (!/^[789][A-Z]$/.test(kelasNormalized)) {
-      if (kelasNormalized.startsWith('7')) kelasNormalized = '7A';
-      else if (kelasNormalized.startsWith('8')) kelasNormalized = '8A';
-      else if (kelasNormalized.startsWith('9')) kelasNormalized = '9A';
-      else kelasNormalized = '7A';
+    let kelasNormalized = 'VII.A';
+    const cleanK = (rawKelas || '').toUpperCase().replace(/\s+/g, '');
+    if (cleanK.includes('VII.B') || cleanK === '7B' || cleanK === 'VIIB' || cleanK === '7.B') {
+      kelasNormalized = 'VII.B';
+    } else if (cleanK.includes('VII.A') || cleanK === '7A' || cleanK === 'VIIA' || cleanK === '7.A') {
+      kelasNormalized = 'VII.A';
+    } else if (cleanK.includes('VIII') || cleanK.startsWith('8')) {
+      kelasNormalized = 'VIII';
+    } else if (cleanK.includes('IX') || cleanK.startsWith('9')) {
+      kelasNormalized = 'IX';
+    } else if (cleanK.includes('7') || cleanK.includes('VII')) {
+      kelasNormalized = 'VII.A';
+    } else if (rawKelas && rawKelas.trim() !== '') {
+      kelasNormalized = rawKelas.trim();
     }
 
     let agamaNormalized: Siswa['agama'] = 'Islam';

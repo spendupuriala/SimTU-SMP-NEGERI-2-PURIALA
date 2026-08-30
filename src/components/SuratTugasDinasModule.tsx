@@ -23,6 +23,7 @@ import {
   Sparkles,
   AlertCircle,
   FileCode,
+  FileSpreadsheet,
   Tag,
   BookOpen,
 } from 'lucide-react';
@@ -49,6 +50,7 @@ import {
 import { getHighestNomorUrutFromLists } from '../utils/suratTemplates';
 import {
   findSuratTugasTemplateInDrive,
+  findSPPDTemplateInDrive,
   fetchSuratFolderFiles,
   uploadSuratTugasDocumentToDrive,
   GoogleDriveFile,
@@ -69,6 +71,23 @@ interface SuratTugasDinasModuleProps {
   onConnectGoogle?: () => void;
   kodeKlasifikasiList?: KodeKlasifikasiSurat[];
 }
+
+export const formatPTKDisplayName = (g: any): string => {
+  if (!g) return '';
+  const rawNama = (g.namaLengkap || g.nama || g.namaGuru || '').trim();
+  if (!rawNama) return '';
+
+  const gelarDepan = (g.gelarDepan || '').trim();
+  const gelarBelakang = (g.gelarBelakang || '').trim();
+
+  let namaLengkap = rawNama;
+  if (rawNama && !rawNama.includes(',') && !rawNama.startsWith('Drs.') && !rawNama.startsWith('Dr.') && !rawNama.startsWith('H.')) {
+    if (gelarDepan) namaLengkap = `${gelarDepan} ${namaLengkap}`;
+    if (gelarBelakang) namaLengkap = `${namaLengkap}, ${gelarBelakang}`;
+  }
+
+  return namaLengkap.trim();
+};
 
 export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
   tugasList,
@@ -98,6 +117,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
   const [isDriveTemplateModalOpen, setIsDriveTemplateModalOpen] = useState(false);
   const [driveFiles, setDriveFiles] = useState<GoogleDriveFile[]>([]);
   const [driveSuratTugasTemplate, setDriveSuratTugasTemplate] = useState<GoogleDriveFile | null>(null);
+  const [driveSPPDTemplate, setDriveSPPDTemplate] = useState<GoogleDriveFile | null>(null);
   const [isLoadingDrive, setIsLoadingDrive] = useState(false);
   const [isSavingToDrive, setIsSavingToDrive] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
@@ -147,16 +167,20 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
     if (!googleToken) return;
     setIsLoadingDrive(true);
     try {
-      const [files, template] = await Promise.all([
+      const [files, template, sppdTemplate] = await Promise.all([
         fetchSuratFolderFiles(googleToken),
         findSuratTugasTemplateInDrive(googleToken),
+        findSPPDTemplateInDrive(googleToken),
       ]);
       setDriveFiles(files);
       if (template) {
         setDriveSuratTugasTemplate(template);
       }
+      if (sppdTemplate) {
+        setDriveSPPDTemplate(sppdTemplate);
+      }
     } catch (err) {
-      console.warn('Error fetching Drive template for Surat Tugas:', err);
+      console.warn('Error fetching Drive template for Surat Tugas & SPPD:', err);
     } finally {
       setIsLoadingDrive(false);
     }
@@ -293,12 +317,19 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
     const selectedPTK = guruPTKList.find((g) => g.id === ptkId);
     if (!selectedPTK) return;
 
+    const formattedName = formatPTKDisplayName(selectedPTK);
+    const nipVal = selectedPTK.nip && selectedPTK.nip !== '-' ? selectedPTK.nip : '';
+    const pangkatVal = selectedPTK.pangkatGolongan || selectedPTK.golongan || 'Penata Muda, III/a';
+    const jabatanVal =
+      selectedPTK.jabatan ||
+      (selectedPTK.mapelUtama ? `Guru ${selectedPTK.mapelUtama}` : 'Guru Mata Pelajaran');
+
     const current = [...(formData.personil || [])];
     current[index] = {
-      nama: selectedPTK.nama,
-      nip: selectedPTK.nip || '-',
-      pangkatGol: selectedPTK.golongan || 'Penata Muda, III/a',
-      jabatan: selectedPTK.jabatan || 'Guru Mata Pelajaran',
+      nama: formattedName,
+      nip: nipVal || '-',
+      pangkatGol: pangkatVal,
+      jabatan: jabatanVal,
     };
     setFormData({ ...formData, personil: current });
   };
@@ -356,17 +387,41 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
 
   const handlePrintDocument = (tugas: SuratTugasDinas, mode: SPTPrintMode) => {
     const html = generateSuratTugasFullHtml(tugas, identitasSekolah, mode);
-    const printWindow = window.open('', '_blank');
-    if (printWindow) {
-      printWindow.document.open();
-      printWindow.document.write(html);
-      printWindow.document.close();
-      printWindow.focus();
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow?.document || iframe.contentDocument;
+    if (doc) {
+      doc.open();
+      doc.write(html);
+      doc.close();
       setTimeout(() => {
-        printWindow.print();
-      }, 500);
-    } else {
-      window.print();
+        try {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+        } catch (e) {
+          console.warn('Iframe print error:', e);
+          const w = window.open('', '_blank');
+          if (w) {
+            w.document.open();
+            w.document.write(html);
+            w.document.close();
+            w.print();
+          }
+        } finally {
+          setTimeout(() => {
+            if (document.body.contains(iframe)) {
+              document.body.removeChild(iframe);
+            }
+          }, 1500);
+        }
+      }, 400);
     }
   };
 
@@ -724,21 +779,29 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                       <div className="flex items-center gap-2">
                         <span className="font-bold text-slate-800">Personil #{idx + 1}</span>
                         {guruPTKList.length > 0 && (
-                          <div className="flex items-center gap-1">
-                            <span className="text-[10px] text-slate-500 font-medium">Pilih dari PTK:</span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[11px] text-sky-800 font-semibold flex items-center gap-1">
+                              <Users className="w-3.5 h-3.5 text-sky-600" />
+                              Pilih PTK:
+                            </span>
                             <select
                               onChange={(e) => handleSelectPTKForPersonil(idx, e.target.value)}
                               defaultValue=""
-                              className="text-[11px] border border-slate-300 rounded p-1 bg-slate-50 focus:ring-1 focus:ring-sky-500"
+                              className="text-xs border border-sky-300 rounded-lg py-1 px-2.5 bg-sky-50/60 hover:bg-white text-slate-800 font-medium focus:ring-2 focus:ring-sky-500 focus:outline-none max-w-xs sm:max-w-md shadow-sm transition"
                             >
                               <option value="" disabled>
-                                -- Pilih Guru / Staf --
+                                -- Pilih Nama Guru / PTK --
                               </option>
-                              {guruPTKList.map((g) => (
-                                <option key={g.id} value={g.id}>
-                                  {g.nama} ({g.jabatan || 'Guru'})
-                                </option>
-                              ))}
+                              {guruPTKList.map((g) => {
+                                const nama = formatPTKDisplayName(g);
+                                const nip = g.nip && g.nip !== '-' ? `NIP: ${g.nip}` : 'Non-NIP';
+                                const role = g.jabatan || g.mapelUtama || 'Guru';
+                                return (
+                                  <option key={g.id} value={g.id}>
+                                    {nama} • {role} ({nip})
+                                  </option>
+                                );
+                              })}
                             </select>
                           </div>
                         )}
@@ -961,7 +1024,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    SPPD
+                    SPPD (Hal 1 &amp; 2)
                   </button>
                   <button
                     onClick={() => setPrintMode('all')}
@@ -971,7 +1034,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    SPT + SPPD
+                    SPT + SPPD Lengkap
                   </button>
                 </div>
 
@@ -981,7 +1044,13 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                   className="bg-sky-600 hover:bg-sky-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>Cetak SPT</span>
+                  <span>
+                    {printMode === 'spt_only'
+                      ? 'Cetak SPT'
+                      : printMode === 'sppd_only'
+                      ? 'Cetak SPPD (Hal 1 & 2)'
+                      : 'Cetak SPT + SPPD'}
+                  </span>
                 </button>
 
                 {/* Download Word (.doc) */}
@@ -1047,42 +1116,43 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
               </div>
             )}
 
-            {/* Document Frame / Canvas (Faithful to Google Drive TATA USAHA/SURAT "Surat Tugas") */}
-            <div className="bg-white p-8 sm:p-12 rounded-xl shadow-lg border border-slate-300 text-slate-900 font-serif max-w-3xl mx-auto leading-relaxed">
-              {/* Kop Surat Resmi Ganda */}
-              <div className="flex items-center justify-between border-b-2 border-black pb-2 mb-1">
-                <img
-                  src={LOGO_KABUPATEN_KONAWE_BASE64}
-                  alt="Logo Konawe"
-                  className="w-16 h-16 object-contain"
-                />
-                <div className="text-center flex-grow px-2">
-                  <p className="font-bold text-xs uppercase tracking-wider text-black m-0">
-                    PEMERINTAH KABUPATEN KONAWE
-                  </p>
-                  <p className="font-bold text-sm uppercase tracking-wider text-black m-0">
-                    DINAS PENDIDIKAN DAN KEBUDAYAAN
-                  </p>
-                  <h2 className="font-extrabold text-base uppercase tracking-wide text-black m-0 mt-0.5">
-                    {identitasSekolah.namaSekolah || 'SMP NEGERI 2 PURIALA'}
-                  </h2>
-                  <p className="text-[10px] text-slate-800 m-0 mt-0.5">
-                    {identitasSekolah.alamat || 'Jl. Poros Puriala - Motaha, Desa Unggulino, Kec. Puriala, Kab. Konawe 93354'}
-                  </p>
-                  <p className="text-[9.5px] italic text-slate-700 m-0">
-                    NPSN: {identitasSekolah.npsn || '40402500'} | Email: {identitasSekolah.email || 'spendupuriala@gmail.com'}
-                  </p>
-                </div>
-                <img
-                  src={LOGO_TUT_WURI_BASE64}
-                  alt="Logo Tut Wuri"
-                  className="w-16 h-16 object-contain"
-                />
-              </div>
-              <div className="border-b border-black mb-5"></div>
+            {/* Document Frame / Canvas (Faithful to Google Drive TATA USAHA/SURAT "Surat Tugas" & "SPPD") */}
+            <div className="space-y-6 max-w-3xl mx-auto">
+              {/* PAGE 1: SURAT PERINTAH TUGAS (SPT) */}
+              {(printMode === 'spt_only' || printMode === 'all') && (
+                <div className="bg-white p-8 sm:p-12 rounded-xl shadow-lg border border-slate-300 text-slate-900 font-serif leading-relaxed">
+                  {/* Kop Surat Resmi Ganda */}
+                  <div className="flex items-center justify-between border-b-2 border-black pb-2 mb-1">
+                    <img
+                      src={LOGO_KABUPATEN_KONAWE_BASE64}
+                      alt="Logo Konawe"
+                      className="w-16 h-16 object-contain"
+                    />
+                    <div className="text-center flex-grow px-2">
+                      <p className="font-bold text-xs uppercase tracking-wider text-black m-0">
+                        PEMERINTAH KABUPATEN KONAWE
+                      </p>
+                      <p className="font-bold text-sm uppercase tracking-wider text-black m-0">
+                        DINAS PENDIDIKAN DAN KEBUDAYAAN
+                      </p>
+                      <h2 className="font-extrabold text-base uppercase tracking-wide text-black m-0 mt-0.5">
+                        {identitasSekolah.namaSekolah || 'SMP NEGERI 2 PURIALA'}
+                      </h2>
+                      <p className="text-[10px] text-slate-800 m-0 mt-0.5">
+                        {identitasSekolah.alamat || 'Jl. Poros Puriala - Motaha, Desa Unggulino, Kec. Puriala, Kab. Konawe 93354'}
+                      </p>
+                      <p className="text-[9.5px] italic text-slate-700 m-0">
+                        NPSN: {identitasSekolah.npsn || '40402500'} | Email: {identitasSekolah.email || 'spendupuriala@gmail.com'}
+                      </p>
+                    </div>
+                    <img
+                      src={LOGO_TUT_WURI_BASE64}
+                      alt="Logo Tut Wuri"
+                      className="w-16 h-16 object-contain"
+                    />
+                  </div>
+                  <div className="border-b border-black mb-5"></div>
 
-              {printMode === 'spt_only' || printMode === 'all' ? (
-                <>
                   {/* Judul & Nomor Surat */}
                   <div className="text-center mb-5">
                     <h3 className="font-bold text-sm uppercase underline tracking-wider text-black m-0">
@@ -1218,31 +1288,67 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                       <li>Arsip Sekolah.</li>
                     </ol>
                   </div>
-                </>
-              ) : null}
+                </div>
+              )}
 
-              {printMode === 'sppd_only' ? (
-                <>
+              {/* PAGE 2: SPPD HALAMAN 1 (LEMBAR DEPAN / MUKA) */}
+              {(printMode === 'sppd_only' || printMode === 'all') && (
+                <div className="bg-white p-8 sm:p-12 rounded-xl shadow-lg border border-slate-300 text-slate-900 font-serif leading-relaxed">
+                  {/* Badge Identifikasi Sheet Google Drive */}
+                  <div className="bg-sky-50 border border-sky-200 text-sky-900 text-[10px] font-bold px-3 py-1 rounded-md mb-4 flex items-center justify-between font-sans">
+                    <span>Google Drive: Folder TATA USAHA/SURAT/SURAT KELUAR &gt; File &quot;SPPD&quot;</span>
+                    <span className="bg-sky-600 text-white px-2 py-0.5 rounded">Sheet: SPPD HAL-1 (Lembar Depan)</span>
+                  </div>
+
+                  {/* Kop Surat Resmi Ganda */}
+                  <div className="flex items-center justify-between border-b-2 border-black pb-2 mb-1">
+                    <img
+                      src={LOGO_KABUPATEN_KONAWE_BASE64}
+                      alt="Logo Konawe"
+                      className="w-16 h-16 object-contain"
+                    />
+                    <div className="text-center flex-grow px-2">
+                      <p className="font-bold text-xs uppercase tracking-wider text-black m-0">
+                        PEMERINTAH KABUPATEN KONAWE
+                      </p>
+                      <p className="font-bold text-sm uppercase tracking-wider text-black m-0">
+                        DINAS PENDIDIKAN DAN KEBUDAYAAN
+                      </p>
+                      <h2 className="font-extrabold text-base uppercase tracking-wide text-black m-0 mt-0.5">
+                        {identitasSekolah.namaSekolah || 'SMP NEGERI 2 PURIALA'}
+                      </h2>
+                      <p className="text-[10px] text-slate-800 m-0 mt-0.5">
+                        {identitasSekolah.alamat || 'Jl. Poros Puriala - Motaha, Desa Unggulino, Kec. Puriala, Kab. Konawe 93354'}
+                      </p>
+                    </div>
+                    <img
+                      src={LOGO_TUT_WURI_BASE64}
+                      alt="Logo Tut Wuri"
+                      className="w-16 h-16 object-contain"
+                    />
+                  </div>
+                  <div className="border-b border-black mb-3"></div>
+
                   <div className="flex justify-end text-[10px] mb-2">
                     <table>
                       <tbody>
-                        <tr><td>Lembar Ke</td><td>:</td><td>I / II</td></tr>
+                        <tr><td>Lembar Ke</td><td>:</td><td>I (Satu)</td></tr>
                         <tr><td>Kode No.</td><td>:</td><td>094</td></tr>
                         <tr><td>Nomor SPPD</td><td>:</td><td className="font-bold">{selectedForPrint.noSPPD || '-'}</td></tr>
                       </tbody>
                     </table>
                   </div>
 
-                  <div className="text-center mb-4">
-                    <h3 className="font-bold text-sm uppercase underline text-black">SURAT PERINTAH PERJALANAN DINAS</h3>
-                    <p className="font-bold text-xs text-black">( S P P D )</p>
+                  <div className="text-center mb-3">
+                    <h3 className="font-bold text-sm uppercase underline text-black m-0">SURAT PERINTAH PERJALANAN DINAS</h3>
+                    <p className="font-bold text-xs text-black m-0">( S P P D )</p>
                   </div>
 
                   <table className="w-full border-collapse border border-slate-700 text-xs mb-4">
                     <tbody>
                       <tr>
                         <td className="border border-slate-700 p-1.5 w-6 text-center font-bold">1.</td>
-                        <td className="border border-slate-700 p-1.5 w-52">Pejabat yang Memberi Perintah</td>
+                        <td className="border border-slate-700 p-1.5 w-52">Pejabat Berwenang yang Memberi Perintah</td>
                         <td className="border border-slate-700 p-1.5 font-bold">Kepala SMP Negeri 2 Puriala</td>
                       </tr>
                       <tr>
@@ -1260,7 +1366,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                         <td className="border border-slate-700 p-1.5">
                           a. {selectedForPrint.personil[0]?.pangkatGol || '-'}<br />
                           b. {selectedForPrint.personil[0]?.jabatan || 'Guru'} / SMP Negeri 2 Puriala<br />
-                          c. Tingkat C (Standar Daerah)
+                          c. Tingkat C (Standar Perjalanan Dinas Daerah)
                         </td>
                       </tr>
                       <tr>
@@ -1270,14 +1376,14 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                       </tr>
                       <tr>
                         <td className="border border-slate-700 p-1.5 text-center font-bold">5.</td>
-                        <td className="border border-slate-700 p-1.5">Alat Angkutan yang Digunakan</td>
-                        <td className="border border-slate-700 p-1.5">{selectedForPrint.alatAngkut}</td>
+                        <td className="border border-slate-700 p-1.5">Alat Angkutan yang Dipergunakan</td>
+                        <td className="border border-slate-700 p-1.5">{selectedForPrint.alatAngkut || 'Kendaraan Dinas'}</td>
                       </tr>
                       <tr>
                         <td className="border border-slate-700 p-1.5 text-center font-bold">6.</td>
                         <td className="border border-slate-700 p-1.5">a. Tempat Berangkat<br />b. Tempat Tujuan</td>
                         <td className="border border-slate-700 p-1.5">
-                          a. SMP Negeri 2 Puriala<br />
+                          a. SMP Negeri 2 Puriala (Desa Unggulino)<br />
                           b. <strong>{selectedForPrint.tempatTujuan}</strong>
                         </td>
                       </tr>
@@ -1287,7 +1393,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                           a. Lamanya Perjalanan Dinas<br />b. Tanggal Berangkat<br />c. Tanggal Harus Kembali
                         </td>
                         <td className="border border-slate-700 p-1.5">
-                          a. {selectedForPrint.lamaHari} Hari<br />
+                          a. {selectedForPrint.lamaHari} ({terbilangHari(selectedForPrint.lamaHari)}) Hari<br />
                           b. {formatTanggalIndonesia(selectedForPrint.tanggalBerangkat)}<br />
                           c. {formatTanggalIndonesia(selectedForPrint.tanggalKembali)}
                         </td>
@@ -1299,7 +1405,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                           {selectedForPrint.personil.length > 1 ? (
                             <ol className="list-decimal pl-4">
                               {selectedForPrint.personil.slice(1).map((p, idx) => (
-                                <li key={idx}><strong>{p.nama}</strong> ({p.jabatan || 'Guru'})</li>
+                                <li key={idx}><strong>{p.nama}</strong> ({p.jabatan || 'Guru'}) - NIP: {p.nip || '-'}</li>
                               ))}
                             </ol>
                           ) : 'Tidak Ada (-)'}
@@ -1307,18 +1413,31 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                       </tr>
                       <tr>
                         <td className="border border-slate-700 p-1.5 text-center font-bold">9.</td>
-                        <td className="border border-slate-700 p-1.5">Pembebanan Anggaran</td>
-                        <td className="border border-slate-700 p-1.5 font-bold">{selectedForPrint.bebanAnggaran}</td>
+                        <td className="border border-slate-700 p-1.5">
+                          Pembebanan Anggaran<br />
+                          a. Instansi<br />
+                          b. Mata Anggaran / Akun
+                        </td>
+                        <td className="border border-slate-700 p-1.5 font-bold">
+                          <br />
+                          a. SMP Negeri 2 Puriala<br />
+                          b. {selectedForPrint.bebanAnggaran || 'Dana BOS SMPN 2 Puriala'}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="border border-slate-700 p-1.5 text-center font-bold">10.</td>
+                        <td className="border border-slate-700 p-1.5">Keterangan Lain-lain</td>
+                        <td className="border border-slate-700 p-1.5">Dasar: {selectedForPrint.dasarPenugasan}</td>
                       </tr>
                     </tbody>
                   </table>
 
-                  <div className="flex justify-end pt-4 text-xs text-black">
+                  <div className="flex justify-end pt-2 text-xs text-black">
                     <div className="text-center w-64">
                       <p>Dikeluarkan di : {selectedForPrint.tempatPenetapan || 'Unggulino'}</p>
                       <p>Pada tanggal : {formatTanggalIndonesia(selectedForPrint.tanggalSurat || selectedForPrint.tanggalBerangkat)}</p>
-                      <p className="font-bold mt-1">Kepala Sekolah,</p>
-                      <div className="h-16"></div>
+                      <p className="font-bold mt-1">Kepala Sekolah / Pejabat Pembuat Komitmen,</p>
+                      <div className="h-14"></div>
                       <p className="font-bold underline uppercase">
                         {identitasSekolah.namaKepalaSekolah || 'ADRIS, S.Pd.,M.Si'}
                       </p>
@@ -1326,8 +1445,85 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                       <p className="font-mono text-[11px]">NIP. {identitasSekolah.nipKepalaSekolah || '19710110 199412 1 0012'}</p>
                     </div>
                   </div>
-                </>
-              ) : null}
+                </div>
+              )}
+
+              {/* PAGE 3: SPPD HALAMAN 2 (LEMBAR BELAKANG / VISUM & CATATAN PENGESAHAN) */}
+              {(printMode === 'sppd_only' || printMode === 'all') && (
+                <div className="bg-white p-8 sm:p-12 rounded-xl shadow-lg border border-slate-300 text-slate-900 font-serif leading-relaxed">
+                  {/* Badge Identifikasi Sheet Google Drive */}
+                  <div className="bg-indigo-50 border border-indigo-200 text-indigo-900 text-[10px] font-bold px-3 py-1 rounded-md mb-4 flex items-center justify-between font-sans">
+                    <span>Google Drive: Folder TATA USAHA/SURAT/SURAT KELUAR &gt; File &quot;SPPD&quot;</span>
+                    <span className="bg-indigo-600 text-white px-2 py-0.5 rounded">Sheet: SPPD HAL-2 (Lembar Belakang / Visum)</span>
+                  </div>
+
+                  {/* Header Halaman 2 */}
+                  <div className="flex justify-end text-[10px] mb-3 border-b border-slate-300 pb-2">
+                    <table>
+                      <tbody>
+                        <tr><td>SPPD No.</td><td>:</td><td className="font-bold">{selectedForPrint.noSPPD || '-'}</td></tr>
+                        <tr><td>Berangkat dari</td><td>:</td><td>SMP Negeri 2 Puriala</td></tr>
+                        <tr><td>Ke (Tempat Tujuan)</td><td>:</td><td className="font-bold">{selectedForPrint.tempatTujuan}</td></tr>
+                        <tr><td>Pada Tanggal</td><td>:</td><td>{formatTanggalIndonesia(selectedForPrint.tanggalBerangkat)}</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Tabel Visum Resmi */}
+                  <table className="w-full border-collapse border border-slate-700 text-[11px] mb-4">
+                    <tbody>
+                      {/* KOLOM I & II */}
+                      <tr>
+                        <td className="border border-slate-700 p-2.5 w-1/2 align-top">
+                          <div className="font-bold mb-1">I. Tiba di : {selectedForPrint.tempatTujuan}</div>
+                          <div>Pada tanggal : {formatTanggalIndonesia(selectedForPrint.tanggalBerangkat)}</div>
+                          <div className="mt-2 text-slate-600">Kepala / Pejabat yang dituju,</div>
+                          <div className="h-16"></div>
+                          <div className="border-b border-dotted border-slate-500 w-44"></div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">NIP.</div>
+                        </td>
+                        <td className="border border-slate-700 p-2.5 w-1/2 align-top">
+                          <div className="font-bold mb-1">II. Berangkat dari : {selectedForPrint.tempatTujuan}</div>
+                          <div>Ke : SMP Negeri 2 Puriala</div>
+                          <div>Pada tanggal : {formatTanggalIndonesia(selectedForPrint.tanggalKembali)}</div>
+                          <div className="mt-2 text-slate-600">Kepala / Pejabat yang dituju,</div>
+                          <div className="h-16"></div>
+                          <div className="border-b border-dotted border-slate-500 w-44"></div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">NIP.</div>
+                        </td>
+                      </tr>
+
+                      {/* KOLOM III & IV */}
+                      <tr>
+                        <td className="border border-slate-700 p-2.5 w-1/2 align-top">
+                          <div className="font-bold mb-1">III. Tiba di : SMP Negeri 2 Puriala</div>
+                          <div>Pada tanggal : {formatTanggalIndonesia(selectedForPrint.tanggalKembali)}</div>
+                          <div className="mt-2 font-bold">Kepala Sekolah,</div>
+                          <div className="h-14"></div>
+                          <div className="font-bold underline uppercase">{identitasSekolah.namaKepalaSekolah || 'ADRIS, S.Pd.,M.Si'}</div>
+                          <div className="text-[10px]">NIP. {identitasSekolah.nipKepalaSekolah || '19710110 199412 1 0012'}</div>
+                        </td>
+                        <td className="border border-slate-700 p-2.5 w-1/2 align-top">
+                          <div className="font-bold mb-1">IV. CATATAN LAIN-LAIN</div>
+                          <div className="text-[10.5px] text-slate-700 leading-relaxed">
+                            Perjalanan dinas ini dilaksanakan sesuai dengan Surat Perintah Tugas (SPT) Nomor: <strong>{selectedForPrint.noSuratTugas}</strong> dan ketentuan peraturan perundang-undangan yang berlaku.
+                          </div>
+                        </td>
+                      </tr>
+
+                      {/* KOLOM V */}
+                      <tr>
+                        <td colSpan={2} className="border border-slate-700 p-2.5 bg-slate-50 text-[10px] leading-relaxed">
+                          <div className="font-bold mb-1">V. PERHATIAN :</div>
+                          <div className="italic text-justify">
+                            Pejabat yang berwenang menerbitkan SPPD, pegawai yang melakukan perjalanan dinas, para pejabat yang mengesahkan tanggal berangkat/tiba serta bendaharawan bertanggung jawab berdasarkan peraturan-peraturan Keuangan Negara apabila Negara mendapat rugi akibat kesalahan, kealpaan dan kelalaiannya.
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1340,7 +1536,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
             <div className="flex justify-between items-center pb-3 border-b border-slate-100 mb-4">
               <h3 className="font-extrabold text-sm uppercase text-slate-900 flex items-center gap-2">
                 <Folder className="w-5 h-5 text-amber-500" />
-                <span>Google Drive: Folder TATA USAHA / SURAT</span>
+                <span>Google Drive: Folder TATA USAHA / SURAT &amp; SPPD</span>
               </h3>
               <button onClick={() => setIsDriveTemplateModalOpen(false)} className="text-slate-400 hover:text-slate-700">
                 <X className="w-5 h-5" />
@@ -1351,25 +1547,25 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
               <div className="bg-sky-50 border border-sky-200 rounded-xl p-3.5 text-slate-800 space-y-1.5">
                 <div className="font-bold text-sky-950 flex items-center gap-1.5 text-xs">
                   <Sparkles className="w-4 h-4 text-sky-600" />
-                  <span>Struktur Folder &amp; Berkas Master</span>
+                  <span>Struktur Folder &amp; Berkas Master Drive</span>
                 </div>
                 <p className="text-slate-600">
-                  Folder target pada Google Drive akun sekolah:{' '}
+                  Folder master Google Drive:{' '}
                   <code className="bg-white px-1.5 py-0.5 rounded text-sky-800 font-bold font-mono">
                     TATA USAHA / SURAT
-                  </code>
-                  . Format penomoran dan butir perintah mengacu pada file{' '}
-                  <code className="bg-white px-1.5 py-0.5 rounded text-slate-900 font-bold font-mono">
-                    Surat Tugas
+                  </code>{' '}
+                  dan subfolder{' '}
+                  <code className="bg-white px-1.5 py-0.5 rounded text-sky-800 font-bold font-mono">
+                    TATA USAHA / SURAT / SURAT KELUAR
                   </code>
                   .
                 </p>
               </div>
 
-              {/* Detected Template */}
+              {/* Status Berkas Master Surat Tugas */}
               <div className="border border-slate-200 rounded-xl p-3.5 bg-slate-50 space-y-2">
                 <div className="font-bold text-slate-800 flex items-center justify-between">
-                  <span>Status Berkas Master &quot;Surat Tugas&quot;:</span>
+                  <span>1. Berkas Master &quot;Surat Tugas&quot; (Folder TATA USAHA/SURAT):</span>
                   <button
                     onClick={loadDriveTemplates}
                     disabled={isLoadingDrive}
@@ -1387,10 +1583,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                       <div>
                         <div className="font-bold text-slate-900">{driveSuratTugasTemplate.name}</div>
                         <div className="text-[10px] text-slate-500 font-mono">
-                          Ukuran: {driveSuratTugasTemplate.size} • Diperbarui:{' '}
-                          {driveSuratTugasTemplate.modifiedTime
-                            ? new Date(driveSuratTugasTemplate.modifiedTime).toLocaleDateString('id-ID')
-                            : '-'}
+                          Folder: TATA USAHA/SURAT • Ukuran: {driveSuratTugasTemplate.size}
                         </div>
                       </div>
                     </div>
@@ -1408,12 +1601,55 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                   </div>
                 ) : (
                   <div className="bg-white p-3 rounded-lg border border-slate-200 text-slate-600 text-center">
-                    <AlertCircle className="w-5 h-5 text-amber-500 mx-auto mb-1" />
-                    <span>
-                      {isGoogleConnected
-                        ? 'Format "Surat Tugas" aktif dan siap digunakan untuk pencetakan langsung maupun ekspor ke folder TATA USAHA/SURAT.'
-                        : 'Hubungkan Google Drive untuk sinkronisasi otomatis dengan folder TATA USAHA/SURAT.'}
-                    </span>
+                    <FileCheck className="w-5 h-5 text-emerald-600 mx-auto mb-1" />
+                    <span>Format &quot;Surat Tugas&quot; aktif dan tersinkronisasi.</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Status Berkas Master SPPD */}
+              <div className="border border-slate-200 rounded-xl p-3.5 bg-slate-50 space-y-2">
+                <div className="font-bold text-slate-800 flex items-center justify-between">
+                  <span>2. Berkas Master &quot;SPPD&quot; (Folder TATA USAHA/SURAT/SURAT KELUAR):</span>
+                  <span className="text-[10px] bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded font-bold">
+                    2 Sheet: SPPD HAL-1 &amp; SPPD HAL-2
+                  </span>
+                </div>
+
+                {driveSPPDTemplate ? (
+                  <div className="bg-white p-3 rounded-lg border border-indigo-200 flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <FileSpreadsheet className="w-5 h-5 text-indigo-600 shrink-0" />
+                      <div>
+                        <div className="font-bold text-slate-900">{driveSPPDTemplate.name}</div>
+                        <div className="text-[10px] text-slate-500 font-mono">
+                          Folder: TATA USAHA/SURAT/SURAT KELUAR • Sheet: SPPD HAL-1 + SPPD HAL-2
+                        </div>
+                      </div>
+                    </div>
+                    {driveSPPDTemplate.webViewLink && (
+                      <a
+                        href={driveSPPDTemplate.webViewLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs bg-indigo-50 text-indigo-800 font-bold px-2.5 py-1 rounded hover:bg-indigo-100 flex items-center gap-1"
+                      >
+                        <span>Buka di Drive</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </div>
+                ) : (
+                  <div className="bg-white p-3 rounded-lg border border-indigo-100 text-slate-700 text-xs">
+                    <div className="flex items-start gap-2">
+                      <FileCheck className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold text-slate-900">Format Master SPPD Aktif:</span>
+                        <p className="text-[11px] text-slate-600 mt-0.5">
+                          Struktur 2 lembar otomatis menggabungkan <strong>Sheet SPPD HAL-1</strong> (Lembar Muka 10 butir) dan <strong>Sheet SPPD HAL-2</strong> (Lembar Belakang / Visum &amp; Catatan Pengesahan).
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

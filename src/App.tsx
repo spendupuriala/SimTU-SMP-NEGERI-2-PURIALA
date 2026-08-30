@@ -48,6 +48,7 @@ import {
   getAccessToken,
   setAccessToken,
   invalidateGoogleAuth,
+  verifyGoogleAccessToken,
 } from './services/googleAuth';
 import {
   getDriveQuotaAndUser,
@@ -149,13 +150,18 @@ export default function App() {
           setLastSyncedTime(new Date().toLocaleTimeString('id-ID'));
         })
         .catch((e: any) => {
-          if (e?.message?.includes('AUTH_EXPIRED') || e?.message?.includes('invalid authentication credentials')) {
+          if (
+            e?.message?.includes('AUTH_EXPIRED') ||
+            e?.message?.includes('invalid authentication credentials') ||
+            e?.message?.includes('401')
+          ) {
             invalidateGoogleAuth();
             setGoogleToken(null);
             setGoogleUser(null);
             setAutoSyncStatus('idle');
           } else {
-            console.warn('Initial Tata Usaha drive sync:', e);
+            console.warn('Initial Tata Usaha drive sync skipped:', e?.message || e);
+            setAutoSyncStatus('idle');
           }
         });
       return;
@@ -169,17 +175,42 @@ export default function App() {
         setAutoSyncStatus('synced');
         setLastSyncedTime(new Date().toLocaleTimeString('id-ID'));
       } catch (err: any) {
-        if (err?.message?.includes('AUTH_EXPIRED') || err?.message?.includes('invalid authentication credentials')) {
+        if (
+          err?.message?.includes('AUTH_EXPIRED') ||
+          err?.message?.includes('invalid authentication credentials') ||
+          err?.message?.includes('401')
+        ) {
           invalidateGoogleAuth();
           setGoogleToken(null);
           setGoogleUser(null);
           setAutoSyncStatus('idle');
+        } else if (
+          err?.name === 'TypeError' ||
+          err?.message?.includes('Failed to fetch') ||
+          err?.message?.includes('NetworkError')
+        ) {
+          // Check token validity asynchronously
+          verifyGoogleAccessToken(googleToken)
+            .then((isValid) => {
+              if (!isValid) {
+                invalidateGoogleAuth();
+                setGoogleToken(null);
+                setGoogleUser(null);
+                setAutoSyncStatus('idle');
+              } else {
+                console.warn('Auto sync Google Drive tertunda sementara (koneksi jaringan).');
+                setAutoSyncStatus('idle');
+              }
+            })
+            .catch(() => {
+              setAutoSyncStatus('idle');
+            });
         } else {
-          console.error('Auto sync to Google Drive folder TATA USAHA failed:', err);
-          setAutoSyncStatus('error');
+          console.warn('Auto sync to Google Drive folder TATA USAHA warning:', err?.message || err);
+          setAutoSyncStatus('idle');
         }
       }
-    }, 800);
+    }, 1500);
 
     return () => clearTimeout(timer);
   }, [data, googleToken]);
@@ -507,6 +538,22 @@ export default function App() {
     const updated = {
       ...data,
       siswa: [siswa, ...data.siswa],
+    };
+    updateData(updated);
+  };
+
+  const handleBatchSiswa = (newList: Siswa[], mode: 'replace' | 'merge' = 'replace') => {
+    let updatedList: Siswa[];
+    if (mode === 'replace') {
+      updatedList = newList;
+    } else {
+      const existingKeySet = new Set(data.siswa.map((s) => (s.nisn || s.nis || s.namaLengkap).toLowerCase().trim()));
+      const filteredNew = newList.filter((s) => !existingKeySet.has((s.nisn || s.nis || s.namaLengkap).toLowerCase().trim()));
+      updatedList = [...data.siswa, ...filteredNew];
+    }
+    const updated = {
+      ...data,
+      siswa: updatedList,
     };
     updateData(updated);
   };
@@ -840,6 +887,12 @@ export default function App() {
                 onUpdate={handleUpdateSiswa}
                 onDelete={handleDeleteSiswa}
                 identitasSekolah={data.identitasSekolah}
+                googleToken={googleToken}
+                googleUser={googleUser}
+                isGoogleConnected={isGoogleConnected}
+                isGoogleLoading={isGoogleLoading}
+                onConnectGoogle={handleConnectGoogle}
+                onBatchUpdate={handleBatchSiswa}
               />
             )}
 

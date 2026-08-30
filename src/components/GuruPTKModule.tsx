@@ -29,7 +29,10 @@ import {
   ZoomOut,
   Maximize2,
   File,
+  FileSpreadsheet,
+  FolderSearch,
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { GuruPTK, IdentitasSekolah } from '../types';
 import {
   saveGuruPTKDataToDrive,
@@ -38,6 +41,7 @@ import {
   uploadGuruBerkasToDrive,
   deleteGoogleDriveFile,
   formatGuruFolderName,
+  scanAllGuruBerkasFromDrive,
 } from '../services/googleDrive';
 
 interface GuruPTKModuleProps {
@@ -94,8 +98,55 @@ export const GuruPTKModule: React.FC<GuruPTKModuleProps> = ({
   // Google Drive PTK Sync States
   const [isSyncingDrive, setIsSyncingDrive] = useState(false);
   const [isPullingDrive, setIsPullingDrive] = useState(false);
+  const [isScanningDriveBerkas, setIsScanningDriveBerkas] = useState(false);
+  const [isPrintListModalOpen, setIsPrintListModalOpen] = useState(false);
+  const [printCategoryOption, setPrintCategoryOption] = useState('Semua');
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
   const [syncFeedback, setSyncFeedback] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
+  const hasAutoScannedRef = useRef(false);
+
+  // Auto-scan Google Drive Folder TATA USAHA/04_KEPEGAWAIAN_PTK for teachers' digital files
+  const handleAutoScanBerkas = async (silent = false) => {
+    if (!googleToken || !isGoogleConnected) {
+      if (!silent && onConnectGoogle) onConnectGoogle();
+      return;
+    }
+
+    try {
+      setIsScanningDriveBerkas(true);
+      if (!silent) {
+        showNotification('Sedang memindai folder TATA USAHA/04_KEPEGAWAIAN_PTK di Google Drive...', 'info');
+      }
+
+      const scanResult = await scanAllGuruBerkasFromDrive(googleToken, guruList);
+      if (scanResult.success && scanResult.data) {
+        if (onBatchUpdate) {
+          onBatchUpdate(scanResult.data);
+        }
+        if (!silent) {
+          showNotification(
+            `Pemindaian Berkas Selesai! Ditemukan ${scanResult.totalFilesFound} berkas pada ${scanResult.matchedFoldersCount} folder Guru & PTK di Drive.`,
+            'success'
+          );
+        }
+      }
+    } catch (err: any) {
+      console.warn('Auto scan berkas error:', err);
+      if (!silent) {
+        showNotification(err?.message || 'Gagal memindai berkas digital dari Google Drive.', 'error');
+      }
+    } finally {
+      setIsScanningDriveBerkas(false);
+    }
+  };
+
+  // Run auto-scan once when Google Drive is connected
+  useEffect(() => {
+    if (isGoogleConnected && googleToken && !hasAutoScannedRef.current) {
+      hasAutoScannedRef.current = true;
+      handleAutoScanBerkas(true);
+    }
+  }, [isGoogleConnected, googleToken]);
 
   // File Upload inside Berkas Modal
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -454,8 +505,57 @@ export const GuruPTKModule: React.FC<GuruPTKModuleProps> = ({
     });
   };
 
+  const exportExcel = () => {
+    try {
+      const dataToExport = guruList.map((g, idx) => ({
+        'No': idx + 1,
+        'Nama Lengkap & Gelar': g.namaLengkap,
+        'NIP': g.nip || '-',
+        'NUPTK': g.nuptk || '-',
+        'Jenis PTK': g.jenisPTK,
+        'Status Kepegawaian': g.statusKepegawaian,
+        'Golongan / Ruang': g.golongan,
+        'Jabatan / Tugas': g.jabatan,
+        'TMT Pengangkatan': g.tmtPengangkatan || '-',
+        'Pendidikan Terakhir': g.pendidikanTerakhir || '-',
+        'Jurusan / Prodi': g.jurusan || '-',
+        'Status Sertifikasi': g.statusSertifikasi,
+        'No. HP / WhatsApp': g.noHp || '-',
+        'Email': g.email || '-',
+        'Jumlah Berkas Digital': (g.berkasDigital || []).length,
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+      worksheet['!cols'] = [
+        { wch: 6 },  // No
+        { wch: 32 }, // Nama
+        { wch: 22 }, // NIP
+        { wch: 20 }, // NUPTK
+        { wch: 22 }, // Jenis PTK
+        { wch: 18 }, // Status
+        { wch: 18 }, // Golongan
+        { wch: 25 }, // Jabatan
+        { wch: 16 }, // TMT
+        { wch: 18 }, // Pendidikan
+        { wch: 24 }, // Jurusan
+        { wch: 20 }, // Sertifikasi
+        { wch: 18 }, // No HP
+        { wch: 28 }, // Email
+        { wch: 16 }, // Berkas
+      ];
+
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Data Guru dan PTK');
+      XLSX.writeFile(workbook, `DATA_GURU_DAN_PTK_SMPN2_PURIALA_${new Date().getFullYear()}.xlsx`);
+      showNotification('Berhasil mengekspor Data Guru & PTK ke format Excel (.xlsx)!', 'success');
+    } catch (e: any) {
+      console.error('Error exporting Excel:', e);
+      showNotification('Gagal mengekspor file Excel: ' + (e?.message || e), 'error');
+    }
+  };
+
   const exportCSV = () => {
-    const headers = ['Nama Lengkap', 'NIP', 'NUPTK', 'Jenis PTK', 'Status Kepegawaian', 'Golongan', 'Jabatan', 'Pendidikan', 'Sertifikasi', 'No HP'];
+    const headers = ['Nama Lengkap', 'NIP', 'NUPTK', 'Jenis PTK', 'Status Kepegawaian', 'Golongan', 'Jabatan', 'Pendidikan', 'Sertifikasi', 'No HP', 'Jumlah Berkas'];
     const rows = guruList.map((g) => [
       `"${g.namaLengkap}"`,
       `"${g.nip}"`,
@@ -467,6 +567,7 @@ export const GuruPTKModule: React.FC<GuruPTKModuleProps> = ({
       `"${g.pendidikanTerakhir}"`,
       `"${g.statusSertifikasi}"`,
       `"${g.noHp}"`,
+      `"${(g.berkasDigital || []).length}"`,
     ]);
 
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
@@ -525,13 +626,40 @@ export const GuruPTKModule: React.FC<GuruPTKModuleProps> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Ekspor Excel */}
+          <button
+            onClick={exportExcel}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-3 rounded-lg shadow-sm transition flex items-center gap-1.5"
+            title="Ekspor data Guru & PTK ke Microsoft Excel (.xlsx)"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <span>Ekspor Excel</span>
+          </button>
+
+          {/* Print PDF */}
+          <button
+            onClick={() => {
+              setPrintCategoryOption('Semua');
+              setIsPrintListModalOpen(true);
+            }}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-2 px-3 rounded-lg shadow-sm transition flex items-center gap-1.5"
+            title="Cetak daftar resmi Guru & PTK ke PDF / Printer"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span>Print PDF</span>
+          </button>
+
+          {/* Ekspor CSV */}
           <button
             onClick={exportCSV}
-            className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold py-2 px-3 rounded-lg border border-slate-300 shadow-xs transition flex items-center gap-1.5"
+            className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold py-2 px-2.5 rounded-lg border border-slate-300 shadow-xs transition flex items-center gap-1"
+            title="Ekspor file format CSV"
           >
             <Download className="w-3.5 h-3.5" />
             <span>CSV</span>
           </button>
+
+          {/* Tambah PTK */}
           <button
             onClick={handleOpenAdd}
             className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold py-2 px-3.5 rounded-lg shadow-sm transition flex items-center gap-1.5"
@@ -561,7 +689,7 @@ export const GuruPTKModule: React.FC<GuruPTKModuleProps> = ({
               </span>
             </div>
             <p className="text-xs text-slate-300 mt-0.5">
-              Sinkronisasi data PTK dan berkas digital terorganisir per folder nama masing-masing guru di Google Drive.
+              Otomatis membaca subfolder nama guru &amp; menghitung berkas digital di folder TATA USAHA/04_KEPEGAWAIAN_PTK.
             </p>
           </div>
         </div>
@@ -569,21 +697,33 @@ export const GuruPTKModule: React.FC<GuruPTKModuleProps> = ({
         <div className="flex items-center gap-2 shrink-0 flex-wrap">
           {isGoogleConnected ? (
             <>
+              {/* Scan Berkas Drive Button */}
+              <button
+                type="button"
+                onClick={() => handleAutoScanBerkas(false)}
+                disabled={isScanningDriveBerkas || isPullingDrive || isSyncingDrive}
+                className="bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold py-2 px-3 rounded-xl shadow-md transition flex items-center gap-1.5 disabled:opacity-50"
+                title="Pindai subfolder nama guru di folder 04_KEPEGAWAIAN_PTK untuk sinkronisasi jumlah berkas digital"
+              >
+                <RefreshCw className={`w-4 h-4 ${isScanningDriveBerkas ? 'animate-spin' : ''}`} />
+                <span>{isScanningDriveBerkas ? 'Memindai Drive...' : 'Pindai Berkas Drive'}</span>
+              </button>
+
               <button
                 type="button"
                 onClick={handlePullFromDrive}
-                disabled={isPullingDrive || isSyncingDrive}
+                disabled={isPullingDrive || isSyncingDrive || isScanningDriveBerkas}
                 className="bg-teal-700/80 hover:bg-teal-600 text-white text-xs font-bold py-2 px-3 rounded-xl border border-teal-500/50 shadow-xs transition flex items-center gap-1.5 disabled:opacity-50"
                 title="Tarik data Guru & PTK dari file 'Data Guru & PTK' di folder 04_KEPEGAWAIAN_PTK"
               >
                 <CloudDownload className={`w-4 h-4 ${isPullingDrive ? 'animate-bounce' : ''}`} />
-                <span>{isPullingDrive ? 'Menarik...' : 'Tarik dari Drive'}</span>
+                <span>{isPullingDrive ? 'Menarik...' : 'Tarik Data'}</span>
               </button>
 
               <button
                 type="button"
                 onClick={handleSaveToDrive}
-                disabled={isSyncingDrive || isPullingDrive}
+                disabled={isSyncingDrive || isPullingDrive || isScanningDriveBerkas}
                 className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2 px-3.5 rounded-xl shadow-md transition flex items-center gap-1.5 disabled:opacity-50"
                 title="Simpan data Guru & PTK ke Google Drive (TATA USAHA/04_KEPEGAWAIAN_PTK/Data Guru & PTK)"
               >
@@ -1520,6 +1660,202 @@ export const GuruPTKModule: React.FC<GuruPTKModuleProps> = ({
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>Ya, Hapus Sekarang</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================= */}
+      {/* MODAL: CETAK DAFTAR GURU & PTK (PRINT PDF RESMI) */}
+      {/* ============================================================= */}
+      {isPrintListModalOpen && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-5xl w-full p-4 sm:p-6 shadow-2xl border border-slate-100 max-h-[94vh] overflow-y-auto light-scrollbar">
+            {/* Header Controls (not printed) */}
+            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 pb-3 border-b border-slate-100 mb-4 no-print">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-indigo-50 text-indigo-700 rounded-xl">
+                  <Printer className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm uppercase text-slate-800">
+                    CETAK DAFTAR GURU &amp; TENAGA KEPENDIDIKAN (PTK)
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Pratinjau dokumen cetak resmi &amp; ekspor PDF format Kepegawaian Sekolah
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-100 px-2.5 py-1.5 rounded-lg">
+                  <Filter className="w-3.5 h-3.5" />
+                  <span>Filter PTK:</span>
+                  <select
+                    value={printCategoryOption}
+                    onChange={(e) => setPrintCategoryOption(e.target.value)}
+                    className="bg-white border border-slate-300 rounded px-2 py-0.5 font-bold text-slate-800 text-xs focus:outline-none"
+                  >
+                    <option value="Semua">Semua PTK ({guruList.length} Orang)</option>
+                    <option value="PNS">Hanya PNS ({guruList.filter((g) => g.statusKepegawaian === 'PNS').length})</option>
+                    <option value="PPPK">Hanya PPPK ({guruList.filter((g) => g.statusKepegawaian === 'PPPK').length})</option>
+                    <option value="Honorer / GTT">Non-ASN / Honorer ({guruList.filter((g) => g.statusKepegawaian?.includes('Honorer')).length})</option>
+                    <option value="Guru Mapel">Guru Mata Pelajaran ({guruList.filter((g) => g.jenisPTK === 'Guru Mapel').length})</option>
+                    <option value="Tenaga Administrasi Sekolah">Tenaga Administrasi ({guruList.filter((g) => g.jenisPTK === 'Tenaga Administrasi Sekolah').length})</option>
+                  </select>
+                </div>
+
+                <button
+                  onClick={() => window.print()}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Cetak Dokumen Sekarang (PDF / Print)</span>
+                </button>
+                <button
+                  onClick={() => setIsPrintListModalOpen(false)}
+                  className="p-2 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-slate-100 transition"
+                  title="Tutup"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Printable Document Sheet */}
+            <div className="border border-slate-800 p-6 printable-document text-slate-900 font-sans text-xs bg-white">
+              {/* Kop Resmi Sekolah */}
+              <div className="text-center border-b-2 border-slate-900 pb-3 mb-4">
+                <p className="font-bold text-[11px] uppercase tracking-wider">
+                  PEMERINTAH KABUPATEN KONAWE • DINAS PENDIDIKAN DAN KEBUDAYAAN
+                </p>
+                <h2 className="font-extrabold text-lg uppercase tracking-wide mt-0.5">
+                  {identitasSekolah.namaSekolah}
+                </h2>
+                <p className="text-[10px] text-slate-600">
+                  NPSN: {identitasSekolah.npsn} • NSS: {identitasSekolah.nss} • Akreditasi: {identitasSekolah.akreditasi}
+                </p>
+                <p className="text-[10px] text-slate-600">
+                  Alamat: {identitasSekolah.alamatSekolah}, Kec. Puriala, Kab. Konawe, Sulawesi Tenggara
+                </p>
+                <div className="mt-2 pt-2 border-t border-slate-400">
+                  <h3 className="font-extrabold text-sm uppercase underline">
+                    DAFTAR NOMINATIF GURU DAN TENAGA KEPENDIDIKAN (PTK)
+                  </h3>
+                  <p className="text-[10px] font-medium text-slate-700">
+                    Tahun Ajaran 2025/2026 • Kategori: {printCategoryOption}
+                  </p>
+                </div>
+              </div>
+
+              {/* Data Table */}
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse border border-slate-800 text-[10px]">
+                  <thead>
+                    <tr className="bg-slate-100 text-slate-900 font-bold border-b border-slate-800 uppercase">
+                      <th className="border border-slate-800 p-1.5 text-center w-8">No</th>
+                      <th className="border border-slate-800 p-1.5 text-left">Nama Lengkap &amp; Gelar</th>
+                      <th className="border border-slate-800 p-1.5 text-center w-24">NIP / NUPTK</th>
+                      <th className="border border-slate-800 p-1.5 text-left">Jabatan / Tugas</th>
+                      <th className="border border-slate-800 p-1.5 text-center w-16">Gol / Ruang</th>
+                      <th className="border border-slate-800 p-1.5 text-center w-16">Status</th>
+                      <th className="border border-slate-800 p-1.5 text-left">Pendidikan &amp; Jurusan</th>
+                      <th className="border border-slate-800 p-1.5 text-center w-20">Sertifikasi</th>
+                      <th className="border border-slate-800 p-1.5 text-center w-16">Berkas Digital</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {guruList
+                      .filter((g) => {
+                        if (printCategoryOption === 'Semua') return true;
+                        if (printCategoryOption === 'PNS') return g.statusKepegawaian === 'PNS';
+                        if (printCategoryOption === 'PPPK') return g.statusKepegawaian === 'PPPK';
+                        if (printCategoryOption === 'Honorer / GTT') return g.statusKepegawaian?.includes('Honorer');
+                        if (printCategoryOption === 'Guru Mapel') return g.jenisPTK === 'Guru Mapel';
+                        if (printCategoryOption === 'Tenaga Administrasi Sekolah') return g.jenisPTK === 'Tenaga Administrasi Sekolah';
+                        return true;
+                      })
+                      .map((guru, idx) => (
+                        <tr key={guru.id} className={idx % 2 === 1 ? 'bg-slate-50' : 'bg-white'}>
+                          <td className="border border-slate-800 p-1.5 text-center font-medium">{idx + 1}</td>
+                          <td className="border border-slate-800 p-1.5 font-bold text-slate-900">{guru.namaLengkap}</td>
+                          <td className="border border-slate-800 p-1.5 text-center font-mono text-[9px]">
+                            <div>NIP: {guru.nip}</div>
+                            {guru.nuptk && guru.nuptk !== '-' && <div className="text-slate-500">NUPTK: {guru.nuptk}</div>}
+                          </td>
+                          <td className="border border-slate-800 p-1.5 font-semibold text-teal-900">{guru.jabatan}</td>
+                          <td className="border border-slate-800 p-1.5 text-center">{guru.golongan}</td>
+                          <td className="border border-slate-800 p-1.5 text-center font-semibold">{guru.statusKepegawaian}</td>
+                          <td className="border border-slate-800 p-1.5">
+                            {guru.pendidikanTerakhir} - {guru.jurusan}
+                          </td>
+                          <td className="border border-slate-800 p-1.5 text-center">
+                            {guru.statusSertifikasi === 'Sudah Sertifikasi' ? 'Lulus (Serdik)' : 'Belum'}
+                          </td>
+                          <td className="border border-slate-800 p-1.5 text-center font-bold">
+                            {(guru.berkasDigital || []).length} Berkas
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Summary Stats */}
+              <div className="mt-3 flex justify-between items-center text-[10px] text-slate-700 bg-slate-50 p-2 border border-slate-300">
+                <div>
+                  <strong>Total PTK Terdaftar: </strong>
+                  {
+                    guruList.filter((g) => {
+                      if (printCategoryOption === 'Semua') return true;
+                      if (printCategoryOption === 'PNS') return g.statusKepegawaian === 'PNS';
+                      if (printCategoryOption === 'PPPK') return g.statusKepegawaian === 'PPPK';
+                      if (printCategoryOption === 'Honorer / GTT') return g.statusKepegawaian?.includes('Honorer');
+                      if (printCategoryOption === 'Guru Mapel') return g.jenisPTK === 'Guru Mapel';
+                      if (printCategoryOption === 'Tenaga Administrasi Sekolah') return g.jenisPTK === 'Tenaga Administrasi Sekolah';
+                      return true;
+                    }).length
+                  } Orang
+                </div>
+                <div className="flex gap-4">
+                  <span>
+                    PNS/PPPK (ASN):{' '}
+                    <strong>
+                      {guruList.filter((g) => g.statusKepegawaian === 'PNS' || g.statusKepegawaian === 'PPPK').length}
+                    </strong>
+                  </span>
+                  <span>
+                    Non-ASN / Honorer:{' '}
+                    <strong>
+                      {guruList.filter((g) => g.statusKepegawaian?.includes('Honorer')).length}
+                    </strong>
+                  </span>
+                  <span>
+                    Sertifikasi Guru:{' '}
+                    <strong>
+                      {guruList.filter((g) => g.statusSertifikasi === 'Sudah Sertifikasi').length}
+                    </strong>
+                  </span>
+                </div>
+              </div>
+
+              {/* Signature section */}
+              <div className="grid grid-cols-2 gap-6 pt-6 mt-4 text-[11px]">
+                <div className="text-center">
+                  <p>Mengetahui,</p>
+                  <p className="font-semibold">Kepala {identitasSekolah.namaSekolah}</p>
+                  <div className="h-16"></div>
+                  <p className="font-bold underline uppercase">{identitasSekolah.namaKepalaSekolah}</p>
+                  <p className="font-mono text-[10px]">NIP. {identitasSekolah.nipKepalaSekolah}</p>
+                </div>
+                <div className="text-center">
+                  <p>Puriala, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                  <p className="font-semibold">Pengelola Kepegawaian / Kepala TU,</p>
+                  <div className="h-16"></div>
+                  <p className="font-bold underline uppercase">{identitasSekolah.namaKepalaTU}</p>
+                  <p className="font-mono text-[10px]">NIP. {identitasSekolah.nipKepalaTU}</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>

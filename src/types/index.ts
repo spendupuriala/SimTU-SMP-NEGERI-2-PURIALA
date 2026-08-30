@@ -186,7 +186,7 @@ export interface Siswa {
   jenisKelamin: 'Laki-laki' | 'Perempuan';
   tempatLahir: string;
   tanggalLahir: string;
-  kelas: '7A' | '7B' | '7C' | '8A' | '8B' | '8C' | '9A' | '9B' | '9C';
+  kelas: 'VII.A' | 'VII.B' | 'VIII' | 'IX' | string;
   agama: 'Islam' | 'Kristen Protestan' | 'Katolik' | 'Hindu' | 'Buddha' | 'Konghucu';
   namaAyah: string;
   pekerjaanAyah: string;

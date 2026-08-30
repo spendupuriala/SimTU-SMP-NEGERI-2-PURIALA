@@ -1907,17 +1907,17 @@ export function terbilangHari(n: number): string {
   return `${n}`;
 }
 
-export type SPTPrintMode = 'spt_only' | 'sppd_only' | 'all';
+export type SPTPrintMode = 'spt_only' | 'sppd_only' | 'sppd_hal1' | 'sppd_hal2' | 'all';
 
 /**
  * Menghasilkan Dokumen HTML Resmi Surat Perintah Tugas (SPT) & SPPD
- * 100% Standar Sesuai Format Google Drive Master Folder TATA USAHA/SURAT (File "Surat Tugas")
- * Menggunakan Font Standar Resmi, Kop Surat Ganda (Logo Konawe & Tut Wuri), Tabel Personil & Legalitas
+ * 100% Standar Sesuai Format Google Drive Master Folder TATA USAHA/SURAT/SURAT KELUAR (File "SPPD" Sheet "SPPD HAL-1" & Sheet "SPPD HAL-2")
+ * Menggabungkan Sheet SPPD HAL-1 (Lembar Muka) dan Sheet SPPD HAL-2 (Lembar Visum / Konfirmasi Keberangkatan & Kedatangan)
  */
 export function generateSuratTugasFullHtml(
   tugas: SuratTugasDinas,
   identitas: IdentitasSekolah,
-  mode: SPTPrintMode = 'spt_only'
+  mode: SPTPrintMode = 'sppd_only'
 ): string {
   const tanggalFormat = formatTanggalIndonesia(tugas.tanggalSurat || tugas.tanggalBerangkat) || '13 Juli 2026';
   const tempatPenetapan = tugas.tempatPenetapan || 'Unggulino';
@@ -1939,18 +1939,19 @@ export function generateSuratTugasFullHtml(
   const isMultiPersonil = personilList.length > 1;
 
   const showSPT = mode === 'spt_only' || mode === 'all';
-  const showSPPD = mode === 'sppd_only' || mode === 'all';
+  const showSPPDHal1 = mode === 'sppd_only' || mode === 'sppd_hal1' || mode === 'all';
+  const showSPPDHal2 = mode === 'sppd_only' || mode === 'sppd_hal2' || mode === 'all';
 
   return `<!DOCTYPE html>
 <html lang="id">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Surat Perintah Tugas - ${tugas.noSuratTugas} - SMP NEGERI 2 PURIALA</title>
+  <title>SPPD & SPT - ${tugas.noSuratTugas} - ${identitas.namaSekolah || 'SMP NEGERI 2 PURIALA'}</title>
   <style>
     @page {
       size: A4 portrait;
-      margin: 1.5cm 2cm 1.5cm 2cm;
+      margin: 1.2cm 1.5cm 1.2cm 1.5cm;
     }
     @media print {
       body {
@@ -1968,14 +1969,15 @@ export function generateSuratTugasFullHtml(
       .page-break {
         page-break-before: always;
         break-before: page;
+        clear: both;
       }
     }
     body {
       font-family: 'Times New Roman', Times, serif;
-      font-size: 11pt;
-      line-height: 1.35;
-      color: #0f172a;
-      background-color: #f8fafc;
+      font-size: 10.5pt;
+      line-height: 1.3;
+      color: #000000;
+      background-color: #f1f5f9;
       padding: 0;
       margin: 0;
     }
@@ -1984,7 +1986,7 @@ export function generateSuratTugasFullHtml(
       max-width: 210mm;
       min-height: 297mm;
       margin: 0 auto 20px auto;
-      padding: 1.8cm 2cm 1.8cm 2cm;
+      padding: 1.4cm 1.6cm 1.4cm 1.6cm;
       box-sizing: border-box;
       box-shadow: 0 4px 15px rgba(0,0,0,0.08);
       position: relative;
@@ -1998,69 +2000,97 @@ export function generateSuratTugasFullHtml(
         min-height: auto;
       }
     }
+
     /* KOP SURAT RESMI GANDA */
     .kop-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      border-bottom: 3px solid #000;
-      padding-bottom: 4px;
-      margin-bottom: 2px;
+      width: 100%;
+      margin-bottom: 10px;
+      font-family: 'Times New Roman', Times, serif;
+      color: #000000;
     }
-    .kop-subline {
-      border-bottom: 1px solid #000;
-      margin-bottom: 16px;
+    .kop-table {
+      width: 100%;
+      border-collapse: collapse;
+      border: none;
+      margin: 0;
+      padding: 0;
+    }
+    .kop-logo-td {
+      width: 80px;
+      min-width: 80px;
+      max-width: 80px;
+      vertical-align: middle;
+      text-align: center;
+      padding: 0;
     }
     .kop-logo {
       width: 72px;
-      height: 72px;
+      max-width: 75px;
+      height: auto;
+      display: block;
+      margin: 0 auto;
       object-fit: contain;
     }
-    .kop-text {
+    .kop-text-td {
+      vertical-align: middle;
       text-align: center;
-      flex-grow: 1;
-      padding: 0 10px;
+      padding: 0 8px;
     }
     .kop-instansi {
-      font-size: 11pt;
-      font-weight: bold;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin: 0;
-    }
-    .kop-dinas {
       font-size: 12pt;
       font-weight: bold;
       text-transform: uppercase;
       letter-spacing: 0.5px;
-      margin: 1px 0;
+      margin: 0;
+      line-height: 1.2;
+    }
+    .kop-dinas {
+      font-size: 13pt;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 2px 0;
+      line-height: 1.2;
     }
     .kop-sekolah {
-      font-size: 14pt;
-      font-weight: 800;
+      font-size: 15pt;
+      font-weight: 900;
       text-transform: uppercase;
       letter-spacing: 1px;
-      margin: 2px 0;
+      margin: 2px 0 3px 0;
+      line-height: 1.2;
+    }
+    .kop-akreditasi {
+      font-size: 9pt;
+      font-weight: bold;
+      margin: 1px 0;
+      line-height: 1.2;
     }
     .kop-alamat {
       font-size: 8.5pt;
       margin: 1px 0;
-      color: #111;
+      line-height: 1.25;
     }
     .kop-kontak {
       font-size: 8pt;
-      font-style: italic;
-      color: #222;
       margin: 0;
+      line-height: 1.25;
+    }
+    .kop-line-double {
+      border-top: 2.5px solid #000000;
+      border-bottom: 1px solid #000000;
+      height: 2px;
+      margin-top: 5px;
+      margin-bottom: 8px;
     }
 
     /* JUDUL SURAT */
     .judul-surat-box {
       text-align: center;
-      margin: 12px 0 16px 0;
+      margin: 8px 0 12px 0;
     }
     .judul-surat-title {
-      font-size: 13pt;
+      font-size: 12.5pt;
       font-weight: bold;
       text-transform: uppercase;
       text-decoration: underline;
@@ -2068,177 +2098,135 @@ export function generateSuratTugasFullHtml(
       margin-bottom: 2px;
     }
     .judul-surat-nomor {
-      font-size: 11pt;
+      font-size: 10.5pt;
       font-weight: bold;
     }
 
-    /* KONTEN SURAT TUGAS */
-    .section-grid {
-      display: grid;
-      grid-template-columns: 85px 12px 1fr;
-      margin-bottom: 10px;
-      align-items: start;
+    /* TABEL SPPD HALAMAN 1 */
+    .sppd-meta-box {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 4px;
+      font-size: 9.5pt;
     }
-    .section-label {
-      font-weight: bold;
+    .sppd-meta-table {
+      border-collapse: collapse;
+      font-size: 9.5pt;
     }
-    .section-sep {
-      text-align: center;
+    .sppd-meta-table td {
+      padding: 1px 3px;
     }
-    .section-memerintahkan {
-      text-align: center;
-      font-weight: bold;
-      text-transform: uppercase;
-      letter-spacing: 2px;
-      margin: 12px 0;
-      font-size: 11pt;
-    }
-
-    /* TABEL PERSONIL */
-    .table-personil {
+    .table-sppd-main {
       width: 100%;
       border-collapse: collapse;
+      font-size: 9.5pt;
       margin-top: 4px;
-      margin-bottom: 6px;
-      font-size: 10.5pt;
+      margin-bottom: 10px;
     }
-    .table-personil th, .table-personil td {
-      border: 1px solid #333;
-      padding: 5px 7px;
+    .table-sppd-main th, .table-sppd-main td {
+      border: 1px solid #000;
+      padding: 3.5px 6px;
       vertical-align: top;
     }
-    .table-personil th {
-      background-color: #f1f5f9;
-      font-weight: bold;
-      text-align: center;
-      font-size: 10pt;
-    }
 
-    /* LIST UNTUK */
-    .list-untuk {
-      margin: 0;
-      padding-left: 0;
-      list-style-type: none;
-    }
-    .list-untuk li {
-      display: flex;
+    /* TABEL SPPD HALAMAN 2 (VISUM & PENGESAHAN) */
+    .sppd-hal2-header-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 9.5pt;
       margin-bottom: 6px;
-      text-align: justify;
     }
-    .list-untuk li .num {
-      width: 22px;
-      flex-shrink: 0;
+    .sppd-hal2-header-table td {
+      padding: 1px 4px;
+      vertical-align: top;
     }
-    .list-untuk li .text {
-      flex-grow: 1;
+    .table-visum {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 9pt;
+      margin-top: 4px;
+      margin-bottom: 8px;
+    }
+    .table-visum th, .table-visum td {
+      border: 1px solid #000;
+      padding: 4px 6px;
+      vertical-align: top;
+    }
+    .visum-sub-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 8.5pt;
+    }
+    .visum-sub-table td {
+      border: none;
+      padding: 1px 2px;
+      vertical-align: top;
     }
 
     /* TANDA TANGAN */
     .ttd-wrapper {
       display: flex;
       justify-content: flex-end;
-      margin-top: 22px;
+      margin-top: 10px;
     }
     .ttd-box {
-      width: 260px;
+      width: 250px;
       text-align: center;
-      font-size: 11pt;
+      font-size: 10pt;
     }
     .ttd-space {
-      height: 65px;
+      height: 55px;
     }
 
-    /* TEMBUSAN */
-    .tembusan-box {
-      margin-top: 15px;
-      font-size: 9.5pt;
-    }
-    .tembusan-title {
+    /* SHEET BADGE / WATERMARK BANNER FOR SCREEN ONLY */
+    .sheet-indicator {
+      display: inline-block;
+      background-color: #e0f2fe;
+      color: #0369a1;
+      border: 1px solid #bae6fd;
+      font-size: 8pt;
       font-weight: bold;
-      text-decoration: underline;
-      margin-bottom: 3px;
-    }
-    .tembusan-list {
-      margin: 0;
-      padding-left: 18px;
-    }
-
-    /* SPPD STYLING */
-    .sppd-meta {
-      display: flex;
-      justify-content: flex-end;
-      margin-bottom: 8px;
-      font-size: 9.5pt;
-    }
-    .sppd-meta-table td {
-      padding: 1px 4px;
-    }
-    .table-sppd {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 10pt;
-      margin-bottom: 12px;
-    }
-    .table-sppd th, .table-sppd td {
-      border: 1px solid #111;
-      padding: 4px 6px;
-      vertical-align: top;
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      font-family: sans-serif;
     }
   </style>
 </head>
 <body>
 
   ${showSPT ? `
-  <!-- HALAMAN 1: SURAT PERINTAH TUGAS (SPT) DINAS MASTER FORMAT -->
+  <!-- ========================================== -->
+  <!-- HALAMAN: SURAT PERINTAH TUGAS (SPT) DINAS -->
+  <!-- ========================================== -->
   <div class="document-page">
-    <!-- KOP SURAT RESMI KEDINASAN SIMETRIS PERSIS MASTER -->
-    <div style="width: 100%; margin-bottom: 14px; font-family: 'Times New Roman', Times, serif; color: #000000;">
-      <table style="width: 100%; border-collapse: collapse; border: none; margin: 0; padding: 0;">
+    <div class="no-print" style="margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+      <span class="sheet-indicator">Berkas Master Drive: Surat Perintah Tugas (SPT)</span>
+      <span style="font-size: 8.5pt; color: #64748b; font-family: sans-serif;">Halaman Surat Tugas</span>
+    </div>
+
+    <!-- KOP SURAT RESMI GANDA -->
+    <div class="kop-header">
+      <table class="kop-table">
         <tr>
-          <!-- LOGO KIRI: Pemkab Konawe -->
-          <td style="width: 90px; min-width: 90px; max-width: 90px; vertical-align: middle; text-align: center; padding: 0;">
-            <img 
-              src="${LOGO_KABUPATEN_KONAWE_BASE64}" 
-              alt="Logo Pemkab Konawe" 
-              style="width: 76px; max-width: 80px; height: auto; display: block; margin: 0 auto; object-fit: contain;" 
-            />
+          <td class="kop-logo-td">
+            <img src="${LOGO_KABUPATEN_KONAWE_BASE64}" alt="Logo Pemkab Konawe" class="kop-logo" />
           </td>
-
-          <!-- TEKS KOP TENGAH: Presisi Simetris -->
-          <td style="vertical-align: middle; text-align: center; padding: 0 10px;">
-            <div style="font-size: 13pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; margin: 0; line-height: 1.2;">
-              PEMERINTAH KABUPATEN KONAWE
-            </div>
-            <div style="font-size: 14pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; margin: 2px 0; line-height: 1.2;">
-              DINAS PENDIDIKAN DAN KEBUDAYAAN
-            </div>
-            <div style="font-size: 16pt; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; margin: 2px 0 3px 0; line-height: 1.2;">
-              ${identitas.namaSekolah || 'SMP NEGERI 2 PURIALA'}
-            </div>
-            <div style="font-size: 9.5pt; font-weight: bold; margin: 1px 0; line-height: 1.2;">
-              Terakreditasi "${identitas.akreditasi || 'B (Baik)'}"
-            </div>
-            <div style="font-size: 9pt; font-style: normal; margin: 1px 0; line-height: 1.25;">
-              Alamat: ${identitas.alamat || 'Jl. Poros Lambuya – Motaha Km.23 Kec. Puriala'}, Kode Pos: ${identitas.kodePos || '93462'}
-            </div>
-            <div style="font-size: 8.5pt; font-style: normal; margin: 0; line-height: 1.25;">
-              NPSN: ${identitas.npsn || '40402805'} | Email: ${identitas.email || 'smpnpuriala523@gmail.com'}
-            </div>
+          <td class="kop-text-td">
+            <div class="kop-instansi">PEMERINTAH KABUPATEN KONAWE</div>
+            <div class="kop-dinas">DINAS PENDIDIKAN DAN KEBUDAYAAN</div>
+            <div class="kop-sekolah">${identitas.namaSekolah || 'SMP NEGERI 2 PURIALA'}</div>
+            <div class="kop-akreditasi">Terakreditasi "${identitas.akreditasi || 'B (Baik)'}"</div>
+            <div class="kop-alamat">Alamat: ${identitas.alamat || 'Jl. Poros Lambuya – Motaha Km.23 Kec. Puriala'}, Kode Pos: ${identitas.kodePos || '93462'}</div>
+            <div class="kop-kontak">NPSN: ${identitas.npsn || '40402805'} | Email: ${identitas.email || 'smpnpuriala523@gmail.com'}</div>
           </td>
-
-          <!-- LOGO KANAN: Tut Wuri Handayani -->
-          <td style="width: 90px; min-width: 90px; max-width: 90px; vertical-align: middle; text-align: center; padding: 0;">
-            <img 
-              src="${LOGO_TUT_WURI_BASE64}" 
-              alt="Logo Tut Wuri Handayani" 
-              style="width: 76px; max-width: 80px; height: auto; display: block; margin: 0 auto; object-fit: contain;" 
-            />
+          <td class="kop-logo-td">
+            <img src="${LOGO_TUT_WURI_BASE64}" alt="Logo Tut Wuri Handayani" class="kop-logo" />
           </td>
         </tr>
       </table>
-
-      <!-- GARIS GANDA KOP SURAT (Tebal & Tipis Klasik Kedinasan) -->
-      <div style="border-top: 2.5px solid #000000; border-bottom: 1px solid #000000; height: 2px; margin-top: 6px; margin-bottom: 4px;"></div>
+      <div class="kop-line-double"></div>
     </div>
 
     <!-- Judul & Nomor Surat -->
@@ -2248,120 +2236,107 @@ export function generateSuratTugasFullHtml(
     </div>
 
     <!-- Dasar Surat -->
-    <div class="section-grid">
-      <div class="section-label">Dasar</div>
-      <div class="section-sep">:</div>
-      <div>${tugas.dasarPenugasan || 'Kepentingan Dinas Operasional Sekolah dan Pembinaan Tugas Tenaga Kependidikan'}</div>
-    </div>
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 8px; font-size: 10pt;">
+      <tr>
+        <td style="width: 80px; font-weight: bold; vertical-align: top;">Dasar</td>
+        <td style="width: 10px; text-align: center; vertical-align: top;">:</td>
+        <td style="text-align: justify;">${tugas.dasarPenugasan || 'Kepentingan Dinas Operasional Sekolah dan Pembinaan Tugas Tenaga Kependidikan'}</td>
+      </tr>
+    </table>
 
     <!-- Memerintahkan -->
-    <div class="section-memerintahkan">MEMERINTAHKAN :</div>
+    <div style="text-align: center; font-weight: bold; text-transform: uppercase; letter-spacing: 2px; margin: 8px 0; font-size: 10.5pt;">
+      MEMERINTAHKAN :
+    </div>
 
     <!-- Kepada -->
-    <div class="section-grid">
-      <div class="section-label">Kepada</div>
-      <div class="section-sep">:</div>
-      <div>
-        ${isMultiPersonil ? `
-        <table class="table-personil">
-          <thead>
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 8px; font-size: 10pt;">
+      <tr>
+        <td style="width: 80px; font-weight: bold; vertical-align: top;">Kepada</td>
+        <td style="width: 10px; text-align: center; vertical-align: top;">:</td>
+        <td>
+          ${isMultiPersonil ? `
+          <table style="width: 100%; border-collapse: collapse; font-size: 9.5pt; margin-top: 2px;">
+            <thead>
+              <tr style="background-color: #f1f5f9;">
+                <th style="border: 1px solid #000; padding: 4px; width: 25px; text-align: center;">No</th>
+                <th style="border: 1px solid #000; padding: 4px;">Nama Lengkap &amp; NIP</th>
+                <th style="border: 1px solid #000; padding: 4px;">Pangkat / Gol. Ruang</th>
+                <th style="border: 1px solid #000; padding: 4px;">Jabatan / Unit Kerja</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${personilList.map((p, idx) => `
+              <tr>
+                <td style="border: 1px solid #000; padding: 4px; text-align: center; font-weight: bold;">${idx + 1}.</td>
+                <td style="border: 1px solid #000; padding: 4px;">
+                  <div style="font-weight: bold;">${p.nama}</div>
+                  <div style="font-size: 8.5pt;">NIP. ${p.nip || '-'}</div>
+                </td>
+                <td style="border: 1px solid #000; padding: 4px;">${p.pangkatGol || '-'}</td>
+                <td style="border: 1px solid #000; padding: 4px;">${p.jabatan || 'Guru'} / SMPN 2 Puriala</td>
+              </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          ` : `
+          <table style="width: 100%; border-collapse: collapse; font-size: 10pt;">
             <tr>
-              <th style="width: 25px;">No</th>
-              <th>Nama Lengkap &amp; NIP</th>
-              <th>Pangkat / Gol. Ruang</th>
-              <th>Jabatan / Unit Kerja</th>
+              <td style="width: 120px; padding: 1px 0;">1. Nama Lengkap</td>
+              <td style="width: 10px;">:</td>
+              <td style="font-weight: bold;">${personilList[0]?.nama || '-'}</td>
             </tr>
-          </thead>
-          <tbody>
-            ${personilList.map((p, idx) => `
             <tr>
-              <td style="text-align: center; font-weight: bold;">${idx + 1}.</td>
-              <td>
-                <div style="font-weight: bold;">${p.nama}</div>
-                <div style="font-size: 9pt;">NIP. ${p.nip || '-'}</div>
-              </td>
-              <td>${p.pangkatGol || '-'}</td>
-              <td>${p.jabatan || 'Guru'} / SMPN 2 Puriala</td>
+              <td style="padding: 1px 0;">2. NIP</td>
+              <td>:</td>
+              <td>${personilList[0]?.nip || '-'}</td>
             </tr>
-            `).join('')}
-          </tbody>
-        </table>
-        ` : `
-        <table style="width: 100%; border-collapse: collapse; font-size: 11pt;">
-          <tr>
-            <td style="width: 130px; padding: 2px 0;">1. Nama Lengkap</td>
-            <td style="width: 12px;">:</td>
-            <td style="font-weight: bold;">${personilList[0]?.nama || '-'}</td>
-          </tr>
-          <tr>
-            <td style="padding: 2px 0;">2. NIP</td>
-            <td>:</td>
-            <td>${personilList[0]?.nip || '-'}</td>
-          </tr>
-          <tr>
-            <td style="padding: 2px 0;">3. Pangkat / Gol.</td>
-            <td>:</td>
-            <td>${personilList[0]?.pangkatGol || '-'}</td>
-          </tr>
-          <tr>
-            <td style="padding: 2px 0;">4. Jabatan</td>
-            <td>:</td>
-            <td>${personilList[0]?.jabatan || 'Kepala Sekolah'}</td>
-          </tr>
-          <tr>
-            <td style="padding: 2px 0;">5. Unit Kerja</td>
-            <td>:</td>
-            <td>SMP Negeri 2 Puriala</td>
-          </tr>
-        </table>
-        `}
-      </div>
-    </div>
+            <tr>
+              <td style="padding: 1px 0;">3. Pangkat / Gol.</td>
+              <td>:</td>
+              <td>${personilList[0]?.pangkatGol || '-'}</td>
+            </tr>
+            <tr>
+              <td style="padding: 1px 0;">4. Jabatan</td>
+              <td>:</td>
+              <td>${personilList[0]?.jabatan || 'Kepala Sekolah'}</td>
+            </tr>
+            <tr>
+              <td style="padding: 1px 0;">5. Unit Kerja</td>
+              <td>:</td>
+              <td>SMP Negeri 2 Puriala</td>
+            </tr>
+          </table>
+          `}
+        </td>
+      </tr>
+    </table>
 
     <!-- Untuk -->
-    <div class="section-grid" style="margin-top: 8px;">
-      <div class="section-label">Untuk</div>
-      <div class="section-sep">:</div>
-      <div>
-        <ul class="list-untuk">
-          <li>
-            <span class="num">1.</span>
-            <span class="text">${tugas.maksudTugas}</span>
-          </li>
-          <li>
-            <span class="num">2.</span>
-            <span class="text">Tempat Pelaksanaan Tugas : <strong>${tugas.tempatTujuan}</strong></span>
-          </li>
-          <li>
-            <span class="num">3.</span>
-            <span class="text">Lamanya Penugasan : <strong>${lamaHariAngka} (${lamaHariTeks}) hari</strong>, terhitung mulai tanggal <strong>${formatTanggalIndonesia(tugas.tanggalBerangkat)}</strong> sampai dengan <strong>${formatTanggalIndonesia(tugas.tanggalKembali)}</strong>.</span>
-          </li>
-          <li>
-            <span class="num">4.</span>
-            <span class="text">Alat angkutan yang digunakan : <strong>${tugas.alatAngkut || 'Kendaraan Dinas'}</strong>.</span>
-          </li>
-          <li>
-            <span class="num">5.</span>
-            <span class="text">Pembebanan Anggaran : Biaya penugasan dibebankan pada <strong>${tugas.bebanAnggaran || 'Dana BOS SMPN 2 Puriala'}</strong>.</span>
-          </li>
-          <li>
-            <span class="num">6.</span>
-            <span class="text">Setelah selesai melaksanakan tugas, agar segera membuat dan melaporkan hasil pelaksanaan tugas secara tertulis kepada Kepala Sekolah.</span>
-          </li>
-          <li>
-            <span class="num">7.</span>
-            <span class="text">Surat Perintah Tugas ini diberikan kepada yang bersangkutan untuk dilaksanakan dengan penuh rasa tanggung jawab dan dedikasi tinggi.</span>
-          </li>
-        </ul>
-      </div>
-    </div>
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 6px; font-size: 10pt;">
+      <tr>
+        <td style="width: 80px; font-weight: bold; vertical-align: top;">Untuk</td>
+        <td style="width: 10px; text-align: center; vertical-align: top;">:</td>
+        <td>
+          <ol style="margin: 0; padding-left: 18px; text-align: justify; line-height: 1.35;">
+            <li style="margin-bottom: 4px;">${tugas.maksudTugas}</li>
+            <li style="margin-bottom: 4px;">Tempat Pelaksanaan Tugas : <strong>${tugas.tempatTujuan}</strong></li>
+            <li style="margin-bottom: 4px;">Lamanya Penugasan : <strong>${lamaHariAngka} (${lamaHariTeks}) hari</strong>, terhitung mulai tanggal <strong>${formatTanggalIndonesia(tugas.tanggalBerangkat)}</strong> sampai dengan <strong>${formatTanggalIndonesia(tugas.tanggalKembali)}</strong>.</li>
+            <li style="margin-bottom: 4px;">Alat angkutan yang digunakan : <strong>${tugas.alatAngkut || 'Kendaraan Dinas'}</strong>.</li>
+            <li style="margin-bottom: 4px;">Pembebanan Anggaran : Biaya penugasan dibebankan pada <strong>${tugas.bebanAnggaran || 'Dana BOS SMPN 2 Puriala'}</strong>.</li>
+            <li style="margin-bottom: 4px;">Setelah selesai melaksanakan tugas, agar segera membuat dan melaporkan hasil pelaksanaan tugas secara tertulis kepada Kepala Sekolah.</li>
+            <li style="margin-bottom: 4px;">Surat Perintah Tugas ini diberikan kepada yang bersangkutan untuk dilaksanakan dengan penuh rasa tanggung jawab dan dedikasi tinggi.</li>
+          </ol>
+        </td>
+      </tr>
+    </table>
 
     <!-- Tanda Tangan Kepala Sekolah -->
     <div class="ttd-wrapper">
       <div class="ttd-box">
         <div>Dikeluarkan di : ${tempatPenetapan}</div>
         <div>Pada tanggal : ${tanggalFormat}</div>
-        <div style="margin-top: 4px; font-weight: bold;">Kepala Sekolah,</div>
+        <div style="margin-top: 3px; font-weight: bold;">Kepala Sekolah,</div>
         <div class="ttd-space"></div>
         <div style="font-weight: bold; text-decoration: underline; text-transform: uppercase;">${kepsekNama}</div>
         <div>${kepsekPangkat}</div>
@@ -2370,9 +2345,9 @@ export function generateSuratTugasFullHtml(
     </div>
 
     <!-- Tembusan -->
-    <div class="tembusan-box">
-      <div class="tembusan-title">Tembusan disampaikan kepada Yth:</div>
-      <ol class="tembusan-list">
+    <div style="margin-top: 10px; font-size: 9pt;">
+      <div style="font-weight: bold; text-decoration: underline; margin-bottom: 2px;">Tembusan disampaikan kepada Yth:</div>
+      <ol style="margin: 0; padding-left: 18px; line-height: 1.25;">
         <li>Kepala Dinas Pendidikan dan Kebudayaan Kabupaten Konawe di Unaaha;</li>
         <li>Pengawas Pembina SMP Dinas Dikbud Kabupaten Konawe;</li>
         <li>Yang bersangkutan untuk dilaksanakan;</li>
@@ -2382,45 +2357,68 @@ export function generateSuratTugasFullHtml(
   </div>
   ` : ''}
 
-  ${showSPPD ? `
-  <!-- HALAMAN 2: SURAT PERINTAH PERJALANAN DINAS (SPPD) -->
+  ${showSPPDHal1 ? `
+  <!-- ========================================================================= -->
+  <!-- GOOGLE DRIVE: Folder TATA USAHA/SURAT/SURAT KELUAR - File "SPPD"          -->
+  <!-- SHEET 1: "SPPD HAL-1" (Format Lembar Depan / Format Utama SPPD)           -->
+  <!-- ========================================================================= -->
   <div class="document-page ${showSPT ? 'page-break' : ''}">
-    <!-- Kop SPPD -->
-    <div class="kop-header">
-      <img src="${LOGO_KABUPATEN_KONAWE_BASE64}" alt="Logo Konawe" class="kop-logo" />
-      <div class="kop-text">
-        <p class="kop-instansi">PEMERINTAH KABUPATEN KONAWE</p>
-        <p class="kop-dinas">DINAS PENDIDIKAN DAN KEBUDAYAAN</p>
-        <h2 class="kop-sekolah">${identitas.namaSekolah || 'SMP NEGERI 2 PURIALA'}</h2>
-        <p class="kop-alamat">${identitas.alamat || 'Jl. Poros Puriala - Motaha, Desa Unggulino, Kec. Puriala, Kab. Konawe, Prov. Sulawesi Tenggara 93354'}</p>
-      </div>
-      <img src="${LOGO_TUT_WURI_BASE64}" alt="Logo Tut Wuri" class="kop-logo" />
+    <div class="no-print" style="margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+      <span class="sheet-indicator" style="background-color: #ecfdf5; color: #065f46; border-color: #a7f3d0;">
+        Google Drive SPPD • Sheet "SPPD HAL-1" (Halaman 1)
+      </span>
+      <span style="font-size: 8.5pt; color: #64748b; font-family: sans-serif;">Lembar Muka SPPD</span>
     </div>
-    <div class="kop-subline"></div>
 
-    <div class="sppd-meta">
+    <!-- KOP SURAT RESMI GANDA -->
+    <div class="kop-header">
+      <table class="kop-table">
+        <tr>
+          <td class="kop-logo-td">
+            <img src="${LOGO_KABUPATEN_KONAWE_BASE64}" alt="Logo Pemkab Konawe" class="kop-logo" />
+          </td>
+          <td class="kop-text-td">
+            <div class="kop-instansi">PEMERINTAH KABUPATEN KONAWE</div>
+            <div class="kop-dinas">DINAS PENDIDIKAN DAN KEBUDAYAAN</div>
+            <div class="kop-sekolah">${identitas.namaSekolah || 'SMP NEGERI 2 PURIALA'}</div>
+            <div class="kop-akreditasi">Terakreditasi "${identitas.akreditasi || 'B (Baik)'}"</div>
+            <div class="kop-alamat">Alamat: ${identitas.alamat || 'Jl. Poros Lambuya – Motaha Km.23 Kec. Puriala'}, Kode Pos: ${identitas.kodePos || '93462'}</div>
+            <div class="kop-kontak">NPSN: ${identitas.npsn || '40402805'} | Email: ${identitas.email || 'smpnpuriala523@gmail.com'}</div>
+          </td>
+          <td class="kop-logo-td">
+            <img src="${LOGO_TUT_WURI_BASE64}" alt="Logo Tut Wuri Handayani" class="kop-logo" />
+          </td>
+        </tr>
+      </table>
+      <div class="kop-line-double"></div>
+    </div>
+
+    <!-- SPPD Metadata Pojok Kanan Atas (Sheet SPPD HAL-1) -->
+    <div class="sppd-meta-box">
       <table class="sppd-meta-table">
         <tr><td>Lembar Ke</td><td>:</td><td>I / II</td></tr>
         <tr><td>Kode No.</td><td>:</td><td>094</td></tr>
-        <tr><td>Nomor SPPD</td><td>:</td><td style="font-weight: bold;">${tugas.noSPPD || '094/024/SPPD/SMP.02/2026'}</td></tr>
+        <tr><td>Nomor SPPD</td><td>:</td><td style="font-weight: bold;">${tugas.noSPPD || '094/024/SPPD/SMP.02/VII/2026'}</td></tr>
       </table>
     </div>
 
-    <div class="judul-surat-box" style="margin-top: 4px;">
+    <!-- Judul SPPD -->
+    <div class="judul-surat-box" style="margin-top: 2px; margin-bottom: 6px;">
       <div class="judul-surat-title">SURAT PERINTAH PERJALANAN DINAS</div>
-      <div style="font-weight: bold; font-size: 11pt;">( S P P D )</div>
+      <div style="font-weight: bold; font-size: 11pt; letter-spacing: 2px;">( S P P D )</div>
     </div>
 
-    <table class="table-sppd">
+    <!-- Tabel 10 Butir SPPD Lengkap (Sheet SPPD HAL-1) -->
+    <table class="table-sppd-main">
       <tbody>
         <tr>
           <td style="width: 25px; text-align: center; font-weight: bold;">1.</td>
-          <td style="width: 220px;">Pejabat yang Memberi Perintah</td>
-          <td style="font-weight: bold;">Kepala SMP Negeri 2 Puriala</td>
+          <td style="width: 230px;">Pejabat Berwenang yang memberi perintah</td>
+          <td style="font-weight: bold;">Kepala ${identitas.namaSekolah || 'SMP Negeri 2 Puriala'}</td>
         </tr>
         <tr>
           <td style="text-align: center; font-weight: bold;">2.</td>
-          <td>Nama Pegawai yang Diperintahkan</td>
+          <td>Nama Pegawai yang diperintahkan</td>
           <td style="font-weight: bold;">${personilList[0]?.nama || '-'}</td>
         </tr>
         <tr>
@@ -2432,18 +2430,18 @@ export function generateSuratTugasFullHtml(
           </td>
           <td>
             a. ${personilList[0]?.pangkatGol || '-'}<br>
-            b. ${personilList[0]?.jabatan || 'Guru'} / SMP Negeri 2 Puriala<br>
+            b. ${personilList[0]?.jabatan || 'Guru'} / ${identitas.namaSekolah || 'SMP Negeri 2 Puriala'}<br>
             c. Tingkat C (Standar Daerah)
           </td>
         </tr>
         <tr>
           <td style="text-align: center; font-weight: bold;">4.</td>
           <td>Maksud Perjalanan Dinas</td>
-          <td>${tugas.maksudTugas}</td>
+          <td style="text-align: justify;">${tugas.maksudTugas}</td>
         </tr>
         <tr>
           <td style="text-align: center; font-weight: bold;">5.</td>
-          <td>Alat Angkutan yang Digunakan</td>
+          <td>Alat Angkutan yang dipergunakan</td>
           <td>${tugas.alatAngkut || 'Kendaraan Dinas'}</td>
         </tr>
         <tr>
@@ -2453,7 +2451,7 @@ export function generateSuratTugasFullHtml(
             b. Tempat Tujuan
           </td>
           <td>
-            a. SMP Negeri 2 Puriala<br>
+            a. ${identitas.namaSekolah || 'SMP Negeri 2 Puriala'} (Kec. Puriala)<br>
             b. <strong>${tugas.tempatTujuan}</strong>
           </td>
         </tr>
@@ -2472,12 +2470,29 @@ export function generateSuratTugasFullHtml(
         </tr>
         <tr>
           <td style="text-align: center; font-weight: bold;">8.</td>
-          <td>Pengikut / Personil Pendamping</td>
+          <td>Pengikut : Nama / Tanggal Lahir / Keterangan</td>
           <td>
             ${isMultiPersonil ? `
-            <ol style="margin: 0; padding-left: 16px;">
-              ${personilList.slice(1).map((p) => `<li><strong>${p.nama}</strong> (NIP. ${p.nip || '-'} / ${p.jabatan || 'Guru'})</li>`).join('')}
-            </ol>
+            <table style="width: 100%; border-collapse: collapse; font-size: 8.5pt; margin-top: 1px;">
+              <thead>
+                <tr style="background: #f8fafc;">
+                  <th style="border: 1px solid #999; padding: 2px; width: 20px; text-align: center;">No</th>
+                  <th style="border: 1px solid #999; padding: 2px;">Nama Lengkap</th>
+                  <th style="border: 1px solid #999; padding: 2px;">NIP / Gol.</th>
+                  <th style="border: 1px solid #999; padding: 2px;">Jabatan</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${personilList.slice(1).map((p, idx) => `
+                <tr>
+                  <td style="border: 1px solid #999; padding: 2px; text-align: center;">${idx + 1}</td>
+                  <td style="border: 1px solid #999; padding: 2px; font-weight: bold;">${p.nama}</td>
+                  <td style="border: 1px solid #999; padding: 2px;">${p.nip || '-'} / ${p.pangkatGol || '-'}</td>
+                  <td style="border: 1px solid #999; padding: 2px;">${p.jabatan || 'Guru'}</td>
+                </tr>
+                `).join('')}
+              </tbody>
+            </table>
             ` : 'Tidak Ada (-)'}
           </td>
         </tr>
@@ -2486,33 +2501,281 @@ export function generateSuratTugasFullHtml(
           <td>
             Pembebanan Anggaran :<br>
             a. Instansi<br>
-            b. Mata Anggaran / Akun
+            b. Akun / Mata Anggaran
           </td>
           <td>
-            a. SMP Negeri 2 Puriala<br>
+            a. ${identitas.namaSekolah || 'SMP Negeri 2 Puriala'}<br>
             b. <strong>${tugas.bebanAnggaran || 'Dana BOS SMPN 2 Puriala'}</strong>
           </td>
         </tr>
         <tr>
           <td style="text-align: center; font-weight: bold;">10.</td>
           <td>Keterangan Lain-lain</td>
-          <td>Surat Perintah Tugas No. ${tugas.noSuratTugas}</td>
+          <td>Surat Perintah Tugas (SPT) Nomor: <strong>${tugas.noSuratTugas}</strong></td>
         </tr>
       </tbody>
     </table>
 
-    <!-- Tanda Tangan SPPD -->
-    <div class="ttd-wrapper" style="margin-top: 14px;">
+    <!-- Tanda Tangan Pejabat Pembuat Komitmen / Kepala Sekolah (Sheet SPPD HAL-1) -->
+    <div class="ttd-wrapper" style="margin-top: 8px;">
       <div class="ttd-box">
         <div>Dikeluarkan di : ${tempatPenetapan}</div>
         <div>Pada tanggal : ${tanggalFormat}</div>
-        <div style="margin-top: 4px; font-weight: bold;">Kepala Sekolah,</div>
+        <div style="margin-top: 3px; font-weight: bold;">Kepala Sekolah / Pejabat Berwenang,</div>
         <div class="ttd-space"></div>
         <div style="font-weight: bold; text-decoration: underline; text-transform: uppercase;">${kepsekNama}</div>
         <div>${kepsekPangkat}</div>
         <div>NIP. ${kepsekNip}</div>
       </div>
     </div>
+  </div>
+  ` : ''}
+
+  ${showSPPDHal2 ? `
+  <!-- ========================================================================= -->
+  <!-- GOOGLE DRIVE: Folder TATA USAHA/SURAT/SURAT KELUAR - File "SPPD"          -->
+  <!-- SHEET 2: "SPPD HAL-2" (Format Lembar Belakang / Visum & Pengesahan)       -->
+  <!-- ========================================================================= -->
+  <div class="document-page ${(showSPT || showSPPDHal1) ? 'page-break' : ''}">
+    <div class="no-print" style="margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+      <span class="sheet-indicator" style="background-color: #fef3c7; color: #92400e; border-color: #fde68a;">
+        Google Drive SPPD • Sheet "SPPD HAL-2" (Halaman 2 - Lembar Belakang / Visum)
+      </span>
+      <span style="font-size: 8.5pt; color: #64748b; font-family: sans-serif;">Lembar Visum &amp; Catatan Kedatangan</span>
+    </div>
+
+    <!-- Header Sheet SPPD HAL-2 -->
+    <table class="sppd-hal2-header-table">
+      <tr>
+        <td style="width: 50%;"></td>
+        <td style="width: 50%;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 9pt;">
+            <tr><td style="width: 120px;">SPPD No.</td><td style="width: 10px;">:</td><td style="font-weight: bold;">${tugas.noSPPD || '094/024/SPPD/SMP.02/VII/2026'}</td></tr>
+            <tr><td>Berangkat dari</td><td>:</td><td>${identitas.namaSekolah || 'SMP Negeri 2 Puriala'}</td></tr>
+            <tr><td>(Tempat Kedudukan)</td><td></td><td></td></tr>
+            <tr><td>Ke</td><td>:</td><td><strong>${tugas.tempatTujuan}</strong></td></tr>
+            <tr><td>Pada tanggal</td><td>:</td><td>${formatTanggalIndonesia(tugas.tanggalBerangkat)}</td></tr>
+            <tr><td colspan="3" style="text-align: center; padding-top: 4px; font-weight: bold;">Kepala Sekolah / Pejabat Pembuat Komitmen</td></tr>
+            <tr><td colspan="3" style="height: 40px;"></td></tr>
+            <tr><td colspan="3" style="text-align: center; font-weight: bold; text-decoration: underline; text-transform: uppercase;">${kepsekNama}</td></tr>
+            <tr><td colspan="3" style="text-align: center;">NIP. ${kepsekNip}</td></tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Tabel Visum / Catatan Perjalanan (Sheet SPPD HAL-2 Kolom I s/d VI) -->
+    <table class="table-visum">
+      <tbody>
+        <!-- KOLOM I & II -->
+        <tr>
+          <!-- Kolom I: Tiba di Tempat Tujuan -->
+          <td style="width: 50%;">
+            <table class="visum-sub-table">
+              <tr>
+                <td style="width: 20px; font-weight: bold;">I.</td>
+                <td style="width: 85px;">Tiba di</td>
+                <td style="width: 8px;">:</td>
+                <td><strong>${tugas.tempatTujuan}</strong></td>
+              </tr>
+              <tr>
+                <td></td>
+                <td>Pada tanggal</td>
+                <td>:</td>
+                <td>${formatTanggalIndonesia(tugas.tanggalBerangkat)}</td>
+              </tr>
+              <tr>
+                <td colspan="4" style="text-align: center; padding-top: 4px; font-weight: bold;">
+                  Kepala / Pejabat Instansi yang dituju :
+                </td>
+              </tr>
+              <tr>
+                <td colspan="4" style="height: 48px; text-align: center; vertical-align: bottom; font-size: 8pt; color: #475569;">
+                  ( Tanda Tangan &amp; Cap Stempel Resmi )
+                </td>
+              </tr>
+              <tr>
+                <td colspan="4" style="text-align: center; padding-top: 2px;">
+                  ( ..................................................................... )<br>
+                  NIP. ................................................................
+                </td>
+              </tr>
+            </table>
+          </td>
+
+          <!-- Kolom I Kanan: Berangkat dari Tempat Tujuan -->
+          <td style="width: 50%;">
+            <table class="visum-sub-table">
+              <tr>
+                <td style="width: 85px;">Berangkat dari</td>
+                <td style="width: 8px;">:</td>
+                <td><strong>${tugas.tempatTujuan}</strong></td>
+              </tr>
+              <tr>
+                <td>Ke</td>
+                <td>:</td>
+                <td>${identitas.namaSekolah || 'SMP Negeri 2 Puriala'}</td>
+              </tr>
+              <tr>
+                <td>Pada tanggal</td>
+                <td>:</td>
+                <td>${formatTanggalIndonesia(tugas.tanggalKembali)}</td>
+              </tr>
+              <tr>
+                <td colspan="3" style="text-align: center; padding-top: 4px; font-weight: bold;">
+                  Kepala / Pejabat Instansi yang dituju :
+                </td>
+              </tr>
+              <tr>
+                <td colspan="3" style="height: 48px; text-align: center; vertical-align: bottom; font-size: 8pt; color: #475569;">
+                  ( Tanda Tangan &amp; Cap Stempel Resmi )
+                </td>
+              </tr>
+              <tr>
+                <td colspan="3" style="text-align: center; padding-top: 2px;">
+                  ( ..................................................................... )<br>
+                  NIP. ................................................................
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- KOLOM II: Tempat Singgah / Lanjutan Lain (Bila Ada) -->
+        <tr>
+          <td>
+            <table class="visum-sub-table">
+              <tr>
+                <td style="width: 20px; font-weight: bold;">II.</td>
+                <td style="width: 85px;">Tiba di</td>
+                <td style="width: 8px;">:</td>
+                <td>.................................................................</td>
+              </tr>
+              <tr>
+                <td></td>
+                <td>Pada tanggal</td>
+                <td>:</td>
+                <td>.................................................................</td>
+              </tr>
+              <tr>
+                <td colspan="4" style="text-align: center; padding-top: 2px;">Kepala / Pejabat :</td>
+              </tr>
+              <tr>
+                <td colspan="4" style="height: 38px;"></td>
+              </tr>
+              <tr>
+                <td colspan="4" style="text-align: center;">
+                  ( ..................................................................... )<br>
+                  NIP. ................................................................
+                </td>
+              </tr>
+            </table>
+          </td>
+          <td>
+            <table class="visum-sub-table">
+              <tr>
+                <td style="width: 85px;">Berangkat dari</td>
+                <td style="width: 8px;">:</td>
+                <td>.................................................................</td>
+              </tr>
+              <tr>
+                <td>Ke</td>
+                <td>:</td>
+                <td>.................................................................</td>
+              </tr>
+              <tr>
+                <td>Pada tanggal</td>
+                <td>:</td>
+                <td>.................................................................</td>
+              </tr>
+              <tr>
+                <td colspan="3" style="text-align: center; padding-top: 2px;">Kepala / Pejabat :</td>
+              </tr>
+              <tr>
+                <td colspan="3" style="height: 38px;"></td>
+              </tr>
+              <tr>
+                <td colspan="3" style="text-align: center;">
+                  ( ..................................................................... )<br>
+                  NIP. ................................................................
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- KOLOM III: Tiba Kembali di Tempat Kedudukan & Klausul Pemeriksaan Dinas -->
+        <tr>
+          <td>
+            <table class="visum-sub-table">
+              <tr>
+                <td style="width: 20px; font-weight: bold;">III.</td>
+                <td style="width: 85px;">Tiba di</td>
+                <td style="width: 8px;">:</td>
+                <td>${identitas.namaSekolah || 'SMP Negeri 2 Puriala'}</td>
+              </tr>
+              <tr>
+                <td></td>
+                <td colspan="3">(Tempat Kedudukan)</td>
+              </tr>
+              <tr>
+                <td></td>
+                <td>Pada tanggal</td>
+                <td>:</td>
+                <td>${formatTanggalIndonesia(tugas.tanggalKembali)}</td>
+              </tr>
+              <tr>
+                <td colspan="4" style="padding-top: 4px; text-align: justify; font-size: 8pt; line-height: 1.25;">
+                  Telah diperiksa, dengan keterangan bahwa perjalanan tersebut di atas benar-benar dilakukan atas perintahnya dan semata-mata untuk kepentingan dinas dalam waktu yang sesingkat-singkatnya.
+                </td>
+              </tr>
+              <tr>
+                <td colspan="4" style="text-align: center; padding-top: 4px; font-weight: bold;">
+                  Kepala Sekolah / Pejabat Pembuat Komitmen
+                </td>
+              </tr>
+              <tr>
+                <td colspan="4" style="height: 45px;"></td>
+              </tr>
+              <tr>
+                <td colspan="4" style="text-align: center; font-weight: bold; text-decoration: underline; text-transform: uppercase;">
+                  ${kepsekNama}
+                </td>
+              </tr>
+              <tr>
+                <td colspan="4" style="text-align: center; font-size: 8.5pt;">
+                  NIP. ${kepsekNip}
+                </td>
+              </tr>
+            </table>
+          </td>
+          <td style="vertical-align: top;">
+            <table class="visum-sub-table">
+              <tr>
+                <td style="width: 25px; font-weight: bold;">IV.</td>
+                <td style="font-weight: bold; text-transform: uppercase;">CATATAN LAIN-LAIN</td>
+              </tr>
+              <tr>
+                <td></td>
+                <td style="font-size: 8.5pt; color: #334155; padding-top: 4px; line-height: 1.3;">
+                  Perjalanan dinas ini dilaksanakan sesuai dengan Surat Perintah Tugas (SPT) Nomor: <strong>${tugas.noSuratTugas}</strong> dan ketentuan peraturan perundang-undangan yang berlaku.
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- KOLOM V: PERHATIAN & KETENTUAN HUKUM -->
+        <tr>
+          <td colspan="2" style="font-size: 8pt; line-height: 1.3; background-color: #fafafa;">
+            <div style="font-weight: bold; margin-bottom: 2px;">V. PERHATIAN :</div>
+            <div style="text-align: justify; font-style: italic;">
+              Pejabat yang berwenang menerbitkan SPPD, pegawai yang melakukan perjalanan dinas, para pejabat yang mengesahkan tanggal berangkat/tiba serta bendaharawan bertanggung jawab berdasarkan peraturan-peraturan Keuangan Negara apabila Negara mendapat rugi akibat kesalahan, kealpaan dan kelalaiannya.
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
   </div>
   ` : ''}
 
