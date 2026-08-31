@@ -2334,7 +2334,7 @@ export const writeSiswaToSheet = async (
     'No',
     'NIS',
     'NISN',
-    'Nama Lengkap Siswa',
+    'Nama Lengkap',
     'JK',
     'Tempat Lahir',
     'Tanggal Lahir',
@@ -2343,11 +2343,8 @@ export const writeSiswaToSheet = async (
     'Nama Ayah',
     'Pekerjaan Ayah',
     'Nama Ibu',
-    'Pekerjaan Ibu',
-    'Alamat Rumah',
-    'No Telp Ortu',
-    'Status Siswa',
-    'Tahun Masuk',
+    'Alamat',
+    'No Telp',
   ];
 
   await writeTemplatePreservingDataToSheet(
@@ -2372,11 +2369,8 @@ export const writeSiswaToSheet = async (
       const cAyah = findIndex(['nama ayah', 'ayah']);
       const cPekAyah = findIndex(['pekerjaan ayah', 'pek ayah']);
       const cIbu = findIndex(['nama ibu', 'ibu']);
-      const cPekIbu = findIndex(['pekerjaan ibu', 'pek ibu']);
       const cAlamat = findIndex(['alamat', 'tempat tinggal', 'domisili']);
       const cTelp = findIndex(['no telp ortu', 'no hp', 'no telp', 'telepon', 'hp']);
-      const cStatus = findIndex(['status siswa', 'status']);
-      const cTahun = findIndex(['tahun masuk', 'thn masuk', 'angkatan']);
 
       const rowValues = new Array(headers.length).fill('');
       const setVal = (index: number, fallbackIdx: number, val: any) => {
@@ -2398,11 +2392,8 @@ export const writeSiswaToSheet = async (
       setVal(cAyah, 9, item.namaAyah);
       setVal(cPekAyah, 10, item.pekerjaanAyah);
       setVal(cIbu, 11, item.namaIbu);
-      setVal(cPekIbu, 12, item.pekerjaanIbu);
-      setVal(cAlamat, 13, item.alamat);
-      setVal(cTelp, 14, item.noTelpOrtu || '-');
-      setVal(cStatus, 15, item.statusSiswa);
-      setVal(cTahun, 16, item.tahunMasuk);
+      setVal(cAlamat, 12, item.alamat);
+      setVal(cTelp, 13, item.noTelpOrtu || '-');
 
       return rowValues;
     }

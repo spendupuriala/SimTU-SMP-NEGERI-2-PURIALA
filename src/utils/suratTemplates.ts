@@ -35,6 +35,50 @@ export const DAFTAR_TEMPLATE_SURAT: JenisSuratTemplateOption[] = [
     driveTemplateName: 'Template Surat Keterangan Aktif Siswa',
   },
   {
+    id: 'izin_kegiatan_siswa',
+    nama: 'Surat Izin Kegiatan Siswa / Dispensasi',
+    kodeKlasifikasi: '400.3.5.4',
+    target: 'siswa',
+    kategori: 'Surat Izin & Dispensasi Siswa',
+    deskripsi: 'Surat izin dan dispensasi belajar resmi sekolah bagi peserta didik untuk mengikuti kegiatan, lomba, atau pelatihan di luar sekolah.',
+    defaultPerihal: 'Surat Izin / Dispensasi Mengikuti Kegiatan Siswa',
+    defaultKeperluan: 'Mengikuti Kegiatan Perkemahan / Lomba Tingkat Kabupaten/Provinsi',
+    driveTemplateName: 'Template Surat Izin Kegiatan Siswa',
+  },
+  {
+    id: 'siap_menerima_siswa_pindahan',
+    nama: 'Surat Keterangan Siap Menerima Siswa Pindahan',
+    kodeKlasifikasi: '400.3.12.1',
+    target: 'siswa',
+    kategori: 'Surat Mutasi Kesiswaan',
+    deskripsi: 'Surat keterangan kesediaan / kesiapan SMP Negeri 2 Puriala menerima kepindahan peserta didik mutasi masuk dari sekolah asal.',
+    defaultPerihal: 'Surat Keterangan Siap Menerima Siswa Pindahan',
+    defaultKeperluan: 'Kelengkapan administrasi penerbitan Surat Mutasi Keluar dan validasi Dapodik dari sekolah asal',
+    driveTemplateName: 'Template Surat Keterangan Siap Menerima Siswa Pindahan',
+  },
+  {
+    id: 'pemberitahuan_pelanggaran_siswa',
+    nama: 'Surat Pemberitahuan Orang Tua Siswa terkait Pelanggaran Siswa',
+    kodeKlasifikasi: '400.3.11.2',
+    target: 'siswa',
+    kategori: 'Surat Pembinaan & Tata Tertib Siswa',
+    deskripsi: 'Surat resmi pemberitahuan dan pemanggilan orang tua/wali siswa terkait pelanggaran tata tertib sekolah serta pembinaan BK.',
+    defaultPerihal: 'Pemberitahuan Pelanggaran Tata Tertib & Panggilan Orang Tua Siswa',
+    defaultKeperluan: 'Koordinasi dan pembinaan bersama Wali Kelas, Guru BK, dan Orang Tua terkait kedisiplinan siswa',
+    driveTemplateName: 'Surat Pemberitahuan Orang Tua Siswa terkait Pelanggaran Siswa.docx',
+  },
+  {
+    id: 'pemberitahuan_skorsing_siswa',
+    nama: 'Surat Pemberitahuan Skorsing Siswa',
+    kodeKlasifikasi: '400.3.11.2',
+    target: 'siswa',
+    kategori: 'Surat Sanksi & Pembinaan Kesiswaan',
+    deskripsi: 'Surat keputusan sanksi skorsing / belajar mandiri di rumah bagi peserta didik atas pelanggaran tata tertib kategori berat.',
+    defaultPerihal: 'Surat Pemberitahuan Sanksi Skorsing / Belajar Mandiri di Rumah',
+    defaultKeperluan: 'Pelaksanaan sanksi pembinaan dan pembelajaran mandiri di bawah pengawasan langsung orang tua/wali',
+    driveTemplateName: 'Template Surat Pemberitahuan Skorsing',
+  },
+  {
     id: 'mutasi_keluar_siswa',
     nama: 'Surat Keterangan Pindah / Mutasi Keluar Siswa',
     kodeKlasifikasi: '400.3.12.1',
@@ -411,7 +455,167 @@ export function renderIsiSuratHTML(surat: PembuatSuratRecord, sekolah: Identitas
   if (surat.targetSubjek === 'siswa') {
     let specificContent = '';
 
-    if (surat.jenisSuratId === 'mutasi_keluar_siswa') {
+    if (surat.jenisSuratId === 'izin_kegiatan_siswa') {
+      const tglMulaiKeg = det.tglMulaiKegiatan ? formatTanggalIndonesia(det.tglMulaiKegiatan) : 'Sesuai Jadwal';
+      const tglSelesaiKeg = det.tglSelesaiKegiatan ? formatTanggalIndonesia(det.tglSelesaiKegiatan) : 'Selesai';
+      specificContent = `
+        <p style="text-align: justify; line-height: 1.5; margin: 12px 0;">
+          Dengan ini Kepala ${sekolah.namaSekolah} memberikan <strong>IZIN DAN DISPENSASI BELAJAR</strong> kepada peserta didik tersebut di atas untuk mengikuti kegiatan:
+        </p>
+        <table style="width: 100%; border-collapse: collapse; margin: 8px 0 12px 0; font-size: 12pt;">
+          <tr>
+            <td style="width: 28%; padding: 3px 0; vertical-align: top;">Nama Kegiatan</td>
+            <td style="width: 3%; padding: 3px 0; vertical-align: top;">:</td>
+            <td style="width: 69%; padding: 3px 0; font-weight: bold;">${det.namaKegiatan || det.keperluan || 'Kegiatan Kesiswaan / Perlombaan / Latihan'}</td>
+          </tr>
+          <tr>
+            <td style="padding: 3px 0; vertical-align: top;">Penyelenggara</td>
+            <td style="padding: 3px 0; vertical-align: top;">:</td>
+            <td style="padding: 3px 0;">${det.penyelenggaraKegiatan || 'Kwartir Cabang Gerakan Pramuka / Dinas Dikbud / Panitia Pelaksana'}</td>
+          </tr>
+          <tr>
+            <td style="padding: 3px 0; vertical-align: top;">Waktu Pelaksanaan</td>
+            <td style="padding: 3px 0; vertical-align: top;">:</td>
+            <td style="padding: 3px 0; font-weight: 500;">${tglMulaiKeg === tglSelesaiKeg ? tglMulaiKeg : `${tglMulaiKeg} s.d. ${tglSelesaiKeg}`}</td>
+          </tr>
+          <tr>
+            <td style="padding: 3px 0; vertical-align: top;">Tempat / Lokasi</td>
+            <td style="padding: 3px 0; vertical-align: top;">:</td>
+            <td style="padding: 3px 0;">${det.tempatKegiatan || 'Lokasi Kegiatan Terkait'}</td>
+          </tr>
+          <tr>
+            <td style="padding: 3px 0; vertical-align: top;">Dispensasi PBM</td>
+            <td style="padding: 3px 0; vertical-align: top;">:</td>
+            <td style="padding: 3px 0; font-style: italic;">${det.dispensasiBelajar || 'Diberikan dispensasi tidak mengikuti Proses Belajar Mengajar (PBM) di kelas selama kegiatan berlangsung'}</td>
+          </tr>
+        </table>
+        <p style="text-align: justify; line-height: 1.5; margin: 12px 0;">
+          Peserta didik yang bersangkutan berkewajiban menjaga nama baik sekolah selama kegiatan serta berkoordinasi dengan guru mata pelajaran untuk menyelesaikan tugas-tugas pelajaran yang tertinggal setelah kegiatan selesai.
+        </p>
+      `;
+    } else if (surat.jenisSuratId === 'siap_menerima_siswa_pindahan') {
+      specificContent = `
+        <p style="text-align: justify; line-height: 1.5; margin: 12px 0;">
+          Berdasarkan Surat Permohonan Mutasi Masuk dari Orang Tua / Wali Siswa dan hasil verifikasi ketersediaan daya tampung rombongan belajar, dengan ini Kepala ${sekolah.namaSekolah} menerangkan bahwa satuan pendidikan kami <strong>MENYATAKAN SIAP DAN BERSEDIA MENERIMA</strong> kepindahan peserta didik tersebut di atas sebagai siswa pindahan pada:
+        </p>
+        <table style="width: 100%; border-collapse: collapse; margin: 8px 0 12px 0; font-size: 12pt;">
+          <tr>
+            <td style="width: 28%; padding: 3px 0; vertical-align: top;">Sekolah Asal</td>
+            <td style="width: 3%; padding: 3px 0; vertical-align: top;">:</td>
+            <td style="width: 69%; padding: 3px 0; font-weight: bold;">${det.sekolahAsal || 'Sekolah Asal Siswa'}</td>
+          </tr>
+          <tr>
+            <td style="padding: 3px 0; vertical-align: top;">Diterima di Kelas</td>
+            <td style="padding: 3px 0; vertical-align: top;">:</td>
+            <td style="padding: 3px 0; font-weight: bold;">${det.kelasDiterima || (sub.kelas ? `Kelas ${sub.kelas}` : 'Kelas VIII (Delapan)')}</td>
+          </tr>
+          <tr>
+            <td style="padding: 3px 0; vertical-align: top;">Tahun Pelajaran / Semester</td>
+            <td style="padding: 3px 0; vertical-align: top;">:</td>
+            <td style="padding: 3px 0;">${det.tahunPelajaranDiterima || sekolah.tahunPelajaranAktif || '2026/2027'} (Semester ${sekolah.semesterAktif || 'Ganjil'})</td>
+          </tr>
+          <tr>
+            <td style="padding: 3px 0; vertical-align: top;">Alasan Penerimaan</td>
+            <td style="padding: 3px 0; vertical-align: top;">:</td>
+            <td style="padding: 3px 0;">${det.alasanDiterima || det.keperluan || 'Daya tampung rombongan belajar masih tersedia dan telah memenuhi syarat administrasi mutasi'}</td>
+          </tr>
+        </table>
+        <p style="text-align: justify; line-height: 1.5; margin: 12px 0;">
+          Surat keterangan kesiapan ini berlaku sebagai dasar penerbitan Surat Keterangan Pindah Sekolah (Mutasi Keluar) dan proses mutasi data pada Aplikasi Dapodik dari sekolah asal.
+        </p>
+      `;
+    } else if (surat.jenisSuratId === 'pemberitahuan_pelanggaran_siswa') {
+      specificContent = `
+        <div style="background-color: #fef2f2; border: 1px solid #fecaca; padding: 10px 14px; margin: 10px 0; border-radius: 4px;">
+          <div style="font-weight: bold; color: #991b1b; font-size: 11pt; margin-bottom: 4px;">PEMBERITAHUAN PELANGGARAN TATA TERTIB SEKOLAH:</div>
+          <table style="width: 100%; border-collapse: collapse; font-size: 11pt; color: #1e293b;">
+            <tr>
+              <td style="width: 25%; padding: 2px 0; vertical-align: top;">Bentuk Pelanggaran</td>
+              <td style="width: 3%; padding: 2px 0; vertical-align: top;">:</td>
+              <td style="width: 72%; padding: 2px 0; font-weight: bold; color: #b91c1c;">${det.bentukPelanggaran || det.keperluan || 'Pelanggaran tata tertib dan disiplin sekolah'}</td>
+            </tr>
+            <tr>
+              <td style="padding: 2px 0; vertical-align: top;">Akumulasi Poin Sanksi</td>
+              <td style="padding: 2px 0; vertical-align: top;">:</td>
+              <td style="padding: 2px 0; font-weight: bold;">${det.poinPelanggaran || 'Tercatat dalam Buku Pembinaan BK'}</td>
+            </tr>
+          </table>
+        </div>
+        <p style="text-align: justify; line-height: 1.5; margin: 12px 0;">
+          Sehubungan dengan pelanggaran tersebut dan dalam rangka penegakan kedisiplinan serta pembinaan terpadu demi masa depan pendidikan ananda, kami <strong>MENGHARAP KEHADIRAN</strong> Bapak/Ibu Orang Tua / Wali Peserta Didik pada:
+        </p>
+        <table style="width: 100%; border-collapse: collapse; margin: 8px 0 12px 0; font-size: 12pt;">
+          <tr>
+            <td style="width: 28%; padding: 3px 0; vertical-align: top;">Hari / Tanggal</td>
+            <td style="width: 3%; padding: 3px 0; vertical-align: top;">:</td>
+            <td style="width: 69%; padding: 3px 0; font-weight: bold;">${det.hariTanggalMenghadap || 'Menyesuaikan Jadwal Kerja'}</td>
+          </tr>
+          <tr>
+            <td style="padding: 3px 0; vertical-align: top;">Waktu / Jam</td>
+            <td style="padding: 3px 0; vertical-align: top;">:</td>
+            <td style="padding: 3px 0;">${det.waktuMenghadap || '08.30 WITA s.d. Selesai'}</td>
+          </tr>
+          <tr>
+            <td style="padding: 3px 0; vertical-align: top;">Tempat</td>
+            <td style="padding: 3px 0; vertical-align: top;">:</td>
+            <td style="padding: 3px 0;">${det.tempatMenghadap || `Ruang Bimbingan Konseling (BK) / Ruang Kepala Sekolah ${sekolah.namaSekolah}`}</td>
+          </tr>
+          <tr>
+            <td style="padding: 3px 0; vertical-align: top;">Menghadap Kepada</td>
+            <td style="padding: 3px 0; vertical-align: top;">:</td>
+            <td style="padding: 3px 0; font-weight: bold;">${det.menghadapKepada || 'Guru BK, Wali Kelas, dan Kepala Sekolah'}</td>
+          </tr>
+          <tr>
+            <td style="padding: 3px 0; vertical-align: top;">Keperluan</td>
+            <td style="padding: 3px 0; vertical-align: top;">:</td>
+            <td style="padding: 3px 0;">${det.keperluan || 'Koordinasi pembinaan kedisiplinan dan penandatanganan surat pernyataan pembinaan'}</td>
+          </tr>
+        </table>
+        <p style="text-align: justify; line-height: 1.5; margin: 12px 0;">
+          Mengingat pentingnya koordinasi ini, kami sangat mengharapkan kehadiran Bapak/Ibu tepat waktu tanpa diwakilkan.
+        </p>
+      `;
+    } else if (surat.jenisSuratId === 'pemberitahuan_skorsing_siswa') {
+      const tglMulaiSkors = det.tglMulaiSkorsing ? formatTanggalIndonesia(det.tglMulaiSkorsing) : 'Tanggal Terbit Surat';
+      const tglSelesaiSkors = det.tglSelesaiSkorsing ? formatTanggalIndonesia(det.tglSelesaiSkorsing) : 'Selesai Masa Sanksi';
+      const tglKembali = det.tglKembaliSekolah ? formatTanggalIndonesia(det.tglKembaliSekolah) : 'Hari Kerja Berikutnya';
+      specificContent = `
+        <p style="text-align: justify; line-height: 1.5; margin: 12px 0;">
+          Menindaklanjuti hasil rapat dewan guru, catatan pelanggaran tata tertib, serta rekomendasi Tim Ketertiban dan Guru Bimbingan Konseling (BK) ${sekolah.namaSekolah}, dengan ini Kepala Sekolah menyampaikan <strong>KEPUTUSAN SANKSI SKORSING (PEMBELAJARAN MANDIRI DI RUMAH)</strong> kepada peserta didik tersebut di atas dengan ketentuan sebagai berikut:
+        </p>
+        <table style="width: 100%; border-collapse: collapse; margin: 8px 0 12px 0; font-size: 12pt;">
+          <tr>
+            <td style="width: 28%; padding: 3px 0; vertical-align: top;">Alasan Sanksi</td>
+            <td style="width: 3%; padding: 3px 0; vertical-align: top;">:</td>
+            <td style="width: 69%; padding: 3px 0; font-weight: bold; color: #b91c1c;">${det.alasanSkorsing || det.bentukPelanggaran || det.keperluan || 'Melakukan pelanggaran tata tertib kategori berat setelah tahapan teguran'}</td>
+          </tr>
+          <tr>
+            <td style="padding: 3px 0; vertical-align: top;">Lama Masa Skorsing</td>
+            <td style="padding: 3px 0; vertical-align: top;">:</td>
+            <td style="padding: 3px 0; font-weight: bold;">${det.lamaSkorsing || '3 (Tiga) Hari Efektif Belajar'}</td>
+          </tr>
+          <tr>
+            <td style="padding: 3px 0; vertical-align: top;">Terhitung Mulai</td>
+            <td style="padding: 3px 0; vertical-align: top;">:</td>
+            <td style="padding: 3px 0;">${tglMulaiSkors} s.d. ${tglSelesaiSkors}</td>
+          </tr>
+          <tr>
+            <td style="padding: 3px 0; vertical-align: top;">Kembali Masuk Sekolah</td>
+            <td style="padding: 3px 0; vertical-align: top;">:</td>
+            <td style="padding: 3px 0; font-weight: bold; color: #0369a1;">${tglKembali} (Wajib Didampingi Orang Tua / Wali)</td>
+          </tr>
+        </table>
+        <div style="background-color: #f8fafc; border-left: 4px solid #e11d48; padding: 10px 12px; margin: 10px 0;">
+          <div style="font-weight: bold; margin-bottom: 4px; font-size: 11pt;">Kewajiban Peserta Didik Selama Masa Skorsing:</div>
+          <ol style="margin: 0; padding-left: 20px; font-size: 11pt; line-height: 1.4;">
+            <li>Tidak diperkenankan berada di lingkungan sekolah selama jam pembelajaran tanpa izin tertulis dari Pimpinan Sekolah.</li>
+            <li>Wajib belajar mandiri di rumah di bawah bimbingan dan pengawasan penuh Orang Tua / Wali.</li>
+            <li>Wajib menyelesaikan tugas akademik: <strong>${det.tugasSelamaSkorsing || 'Menyelesaikan seluruh tugas mandiri mata pelajaran dan membuat surat pernyataan pembinaan bermaterai'}</strong>.</li>
+            <li>Saat kembali masuk sekolah pada tanggal yang telah ditentukan, peserta didik <strong>WAJIB</strong> hadir bersama Orang Tua/Wali menghadap Guru BK dan Kepala Sekolah.</li>
+          </ol>
+        </div>
+      `;
+    } else if (surat.jenisSuratId === 'mutasi_keluar_siswa') {
       specificContent = `
         <p style="text-align: justify; line-height: 1.5; margin: 12px 0;">
           Berdasarkan Surat Permohonan Pindah Sekolah dari Orang Tua / Wali Peserta Didik bersangkutan, dengan ini Kepala ${sekolah.namaSekolah} menerangkan bahwa peserta didik tersebut di atas telah <strong>DISETUJUI PINDAH / MUTASI</strong> ke:

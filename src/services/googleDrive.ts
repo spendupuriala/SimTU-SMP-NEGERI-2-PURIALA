@@ -1870,8 +1870,9 @@ export const saveBukuIndukDataToDrive = async (
   const nowFormatted = new Date().toISOString();
 
   // 1. Check if a Google Spreadsheet named "BUKU_INDUK_SISWA_DAN_ALUMNI" exists in the folder
-  const checkSheetQuery = `mimeType = 'application/vnd.google-apps.spreadsheet' and (name = 'BUKU_INDUK_SISWA_DAN_ALUMNI' or name = 'BUKU_INDUK_SISWA' or name = 'BUKU INDUK SISWA DAN ALUMNI' or name = 'BUKU INDUK SISWA') and '${kesiswaanFolderId}' in parents and trashed = false`;
+  const checkSheetQuery = `mimeType = 'application/vnd.google-apps.spreadsheet' and name = 'BUKU_INDUK_SISWA_DAN_ALUMNI' and '${kesiswaanFolderId}' in parents and trashed = false`;
   let existingSheetId: string | null = null;
+  let fileName = 'BUKU_INDUK_SISWA_DAN_ALUMNI';
 
   try {
     const sheetSearchRes = await fetch(`${DRIVE_API_URL}/files?${new URLSearchParams({ q: checkSheetQuery, fields: 'files(id, name)' }).toString()}`, {
@@ -1881,12 +1882,11 @@ export const saveBukuIndukDataToDrive = async (
       const sheetData = await sheetSearchRes.json();
       if (sheetData.files && sheetData.files.length > 0) {
         existingSheetId = sheetData.files[0].id;
-        // Non-destructive write: preserves template header styles, fonts, and borders without changing table structure
-        await writeSiswaToSheet(accessToken, existingSheetId, siswaList, 'BUKU INDUK SISWA');
+        fileName = sheetData.files[0].name;
       }
     }
   } catch (sheetErr) {
-    console.warn('Could not sync to existing Google Spreadsheet (will attempt create or fallback):', sheetErr);
+    console.warn('Could not sync to existing Google Spreadsheet:', sheetErr);
   }
 
   // If no spreadsheet exists yet, create the Google Spreadsheet named "BUKU_INDUK_SISWA_DAN_ALUMNI"
@@ -1924,68 +1924,26 @@ export const saveBukuIndukDataToDrive = async (
           method: 'PATCH',
           headers: { Authorization: `Bearer ${accessToken}` },
         });
-
-        // Write 2D array data
-        await writeSiswaToSheet(accessToken, existingSheetId, siswaList, 'BUKU INDUK SISWA');
+      } else {
+        const err = await createSheetRes.json().catch(() => ({}));
+        throw new Error(err?.error?.message || 'Gagal membuat Google Spreadsheet baru untuk Buku Induk');
       }
-    } catch (createErr) {
-      console.warn('Could not create new Google Spreadsheet:', createErr);
+    } catch (createErr: any) {
+      throw new Error(`Gagal membuat Google Spreadsheet Buku Induk: ${createErr?.message || createErr}`);
     }
   }
 
-  // 2. Also save/update the JSON redundancy file in TATA USAHA/05_KESISWAAN_DAN_ALUMNI
-  const fileName = 'BUKU_INDUK_SISWA_DAN_ALUMNI.json';
-  const payload = {
-    _title: 'BUKU INDUK SISWA & PESERTA DIDIK',
-    _folder: 'TATA USAHA/05_KESISWAAN_DAN_ALUMNI',
-    _fileName: 'BUKU_INDUK_SISWA_DAN_ALUMNI',
-    _lastSync: nowFormatted,
-    _totalSiswa: siswaList.length,
-    _school: 'SMP NEGERI 2 PURIALA',
-    daftarSiswa: siswaList,
-    siswa: siswaList,
-  };
-
-  const jsonString = JSON.stringify(payload, null, 2);
-  const blob = new Blob([jsonString], { type: 'application/json' });
-
-  // Check if file exists in 05_KESISWAAN_DAN_ALUMNI folder
-  const checkQuery = `(name = '${fileName}' or name = 'BUKU_INDUK_SISWA_DAN_ALUMNI' or name = 'BUKU_INDUK_SISWA.json') and '${kesiswaanFolderId}' in parents and trashed = false`;
-  const checkParams = new URLSearchParams({ q: checkQuery, fields: 'files(id, name)' });
-
-  const searchRes = await fetch(`${DRIVE_API_URL}/files?${checkParams.toString()}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-
-  if (searchRes.status === 401) {
-    invalidateGoogleAuth();
-    throw new Error('AUTH_EXPIRED: Token Google Drive kedaluwarsa.');
-  }
-
-  let existingJsonFileId: string | null = null;
-  if (searchRes.ok) {
-    const searchData = await searchRes.json();
-    if (searchData.files && searchData.files.length > 0) {
-      existingJsonFileId = searchData.files[0].id;
-    }
-  }
-
-  let finalJsonFileId = existingJsonFileId;
-  if (existingJsonFileId) {
-    const updated = await updateFileInGoogleDrive(accessToken, existingJsonFileId, blob, 'application/json');
-    if (!updated) {
-      const up = await uploadFileToGoogleDrive(accessToken, blob, fileName, 'application/json', kesiswaanFolderId);
-      finalJsonFileId = up.id;
-    }
+  if (existingSheetId) {
+    // Write 2D array data directly to sheet "BUKU INDUK SISWA"
+    await writeSiswaToSheet(accessToken, existingSheetId, siswaList, 'BUKU INDUK SISWA');
   } else {
-    const up = await uploadFileToGoogleDrive(accessToken, blob, fileName, 'application/json', kesiswaanFolderId);
-    finalJsonFileId = up.id;
+    throw new Error('Gagal menginisialisasi Google Spreadsheet Buku Induk Siswa.');
   }
 
   return {
     success: true,
-    fileId: existingSheetId || finalJsonFileId || '',
-    fileName: 'BUKU_INDUK_SISWA_DAN_ALUMNI',
+    fileId: existingSheetId,
+    fileName: fileName,
     folderId: kesiswaanFolderId,
     lastUpdated: nowFormatted,
   };
@@ -1993,7 +1951,7 @@ export const saveBukuIndukDataToDrive = async (
 
 /**
  * Load Buku Induk Siswa from Google Drive folder TATA USAHA/05_KESISWAAN_DAN_ALUMNI
- * Searches for "BUKU_INDUK_SISWA_DAN_ALUMNI" (Google Sheets or JSON)
+ * Searches strictly for "BUKU_INDUK_SISWA_DAN_ALUMNI" (Google Sheets)
  */
 export const loadBukuIndukDataFromDrive = async (
   accessToken: string
@@ -2004,126 +1962,78 @@ export const loadBukuIndukDataFromDrive = async (
 
   const kesiswaanFolderId = await findOrCreateKesiswaanFolder(accessToken);
 
-  // 1. Search inside 05_KESISWAAN_DAN_ALUMNI folder first
-  const queryInFolder = `'${kesiswaanFolderId}' in parents and trashed = false and (name contains 'BUKU_INDUK_SISWA_DAN_ALUMNI' or name contains 'BUKU INDUK SISWA' or name contains 'BUKU_INDUK' or name contains 'SISWA')`;
-  const resInFolder = await fetch(
-    `${DRIVE_API_URL}/files?${new URLSearchParams({
-      q: queryInFolder,
-      fields: 'files(id, name, mimeType, webViewLink)',
-      orderBy: 'modifiedTime desc',
-      pageSize: '20',
-    }).toString()}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
+  // 1. Query strictly inside 05_KESISWAAN_DAN_ALUMNI folder for a spreadsheet named "BUKU_INDUK_SISWA_DAN_ALUMNI"
+  const queryInFolder = `mimeType = 'application/vnd.google-apps.spreadsheet' and name = 'BUKU_INDUK_SISWA_DAN_ALUMNI' and '${kesiswaanFolderId}' in parents and trashed = false`;
+  
+  let targetFileId: string | null = null;
+  let targetFileName = 'BUKU_INDUK_SISWA_DAN_ALUMNI';
 
-  if (resInFolder.status === 401) {
-    invalidateGoogleAuth();
-    throw new Error('AUTH_EXPIRED: Token Google Drive kedaluwarsa.');
-  }
-
-  let candidateFiles: any[] = [];
-  if (resInFolder.ok) {
-    candidateFiles = (await resInFolder.json()).files || [];
-  }
-
-  // 2. If nothing found in folder, search globally in Drive
-  if (candidateFiles.length === 0) {
-    const queryGlobal = `trashed = false and (name = 'BUKU_INDUK_SISWA_DAN_ALUMNI' or name = 'BUKU_INDUK_SISWA_DAN_ALUMNI.json' or name contains 'BUKU_INDUK_SISWA_DAN_ALUMNI')`;
-    const resGlobal = await fetch(
+  try {
+    const resInFolder = await fetch(
       `${DRIVE_API_URL}/files?${new URLSearchParams({
-        q: queryGlobal,
-        fields: 'files(id, name, mimeType, webViewLink)',
-        orderBy: 'modifiedTime desc',
-        pageSize: '10',
+        q: queryInFolder,
+        fields: 'files(id, name)',
+        pageSize: '1',
       }).toString()}`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
-    if (resGlobal.ok) {
-      candidateFiles = (await resGlobal.json()).files || [];
+
+    if (resInFolder.status === 401) {
+      invalidateGoogleAuth();
+      throw new Error('AUTH_EXPIRED: Token Google Drive kedaluwarsa.');
     }
-  }
 
-  // Prioritize exact match "BUKU_INDUK_SISWA_DAN_ALUMNI"
-  candidateFiles.sort((a, b) => {
-    const aExact = a.name === 'BUKU_INDUK_SISWA_DAN_ALUMNI' || a.name === 'BUKU_INDUK_SISWA_DAN_ALUMNI.json' ? 1 : 0;
-    const bExact = b.name === 'BUKU_INDUK_SISWA_DAN_ALUMNI' || b.name === 'BUKU_INDUK_SISWA_DAN_ALUMNI.json' ? 1 : 0;
-    return bExact - aExact;
-  });
-
-  for (const file of candidateFiles) {
-    // A. If it's a Google Spreadsheet
-    if (file.mimeType === 'application/vnd.google-apps.spreadsheet') {
-      try {
-        const sheetMetaRes = await fetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${file.id}?fields=sheets(properties(sheetId,title))`,
-          { headers: { Authorization: `Bearer ${accessToken}` } }
-        );
-        if (sheetMetaRes.ok) {
-          const metaData = await sheetMetaRes.json();
-          const sheets = (metaData.sheets || []).map((s: any) => s.properties?.title || '');
-          const targetSheet = sheets.find((t: string) => {
-            const tl = t.toLowerCase();
-            return (
-              tl.includes('buku induk') ||
-              tl.includes('siswa') ||
-              tl.includes('data siswa') ||
-              tl.includes('peserta didik') ||
-              tl.includes('kesiswaan')
-            );
-          }) || sheets[0];
-
-          if (targetSheet) {
-            const valuesRes = await fetch(
-              `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/${encodeURIComponent(targetSheet)}!A1:Z2000`,
-              { headers: { Authorization: `Bearer ${accessToken}` } }
-            );
-            if (valuesRes.ok) {
-              const valData = await valuesRes.json();
-              const rows: string[][] = valData.values || [];
-              if (rows.length >= 2) {
-                const parsed = parseSiswaFromRows(rows);
-                if (parsed.siswaList && parsed.siswaList.length > 0) {
-                  return {
-                    success: true,
-                    data: parsed.siswaList,
-                    sourceName: `${file.name} (${targetSheet})`,
-                    sourceFolder: 'TATA USAHA/05_KESISWAAN_DAN_ALUMNI',
-                  };
-                }
-              }
-            }
-          }
-        }
-      } catch (e) {
-        console.warn(`Error reading spreadsheet ${file.name}:`, e);
+    if (resInFolder.ok) {
+      const data = await resInFolder.json();
+      if (data.files && data.files.length > 0) {
+        targetFileId = data.files[0].id;
+        targetFileName = data.files[0].name;
       }
     }
-
-    // B. If it's a JSON file
-    if (file.mimeType === 'application/json' || file.name.endsWith('.json')) {
-      try {
-        const fileContentRes = await fetch(`${DRIVE_API_URL}/files/${file.id}?alt=media`, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
-        if (fileContentRes.ok) {
-          const parsed = await fileContentRes.json();
-          const list: Siswa[] = parsed.daftarSiswa || parsed.siswa || parsed.data || (Array.isArray(parsed) ? parsed : []);
-          if (Array.isArray(list) && list.length > 0) {
-            return {
-              success: true,
-              data: list,
-              sourceName: file.name,
-              sourceFolder: 'TATA USAHA/05_KESISWAAN_DAN_ALUMNI',
-            };
-          }
-        }
-      } catch (e) {
-        console.warn(`Error reading json file ${file.name}:`, e);
-      }
+  } catch (err: any) {
+    if (err?.message?.includes('AUTH_EXPIRED')) {
+      throw err;
     }
+    console.warn('Could not query BUKU_INDUK_SISWA_DAN_ALUMNI from folder:', err);
   }
 
-  throw new Error('Tidak ditemukan berkas "BUKU_INDUK_SISWA_DAN_ALUMNI" di Google Drive folder TATA USAHA/05_KESISWAAN_DAN_ALUMNI.');
+  if (!targetFileId) {
+    throw new Error(
+      'Gagal menarik data: Berkas spreadsheet "BUKU_INDUK_SISWA_DAN_ALUMNI" tidak ditemukan di dalam Google Drive folder TATA USAHA/05_KESISWAAN_DAN_ALUMNI. Silakan klik "Kirim Data ke Drive" terlebih dahulu untuk membuat berkas.'
+    );
+  }
+
+  // 2. Read strictly from sheet "BUKU INDUK SISWA"
+  try {
+    const targetSheet = 'BUKU INDUK SISWA';
+    const valuesRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${targetFileId}/values/${encodeURIComponent(targetSheet)}!A1:Z2000`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    
+    if (valuesRes.ok) {
+      const valData = await valuesRes.json();
+      const rows: string[][] = valData.values || [];
+      if (rows.length >= 2) {
+        const parsed = parseSiswaFromRows(rows);
+        if (parsed.siswaList && parsed.siswaList.length > 0) {
+          return {
+            success: true,
+            data: parsed.siswaList,
+            sourceName: `${targetFileName} (${targetSheet})`,
+            sourceFolder: 'TATA USAHA/05_KESISWAAN_DAN_ALUMNI',
+          };
+        }
+      }
+    } else {
+      const errJson = await valuesRes.json().catch(() => ({}));
+      throw new Error(errJson?.error?.message || `Gagal membaca sheet "${targetSheet}".`);
+    }
+  } catch (e: any) {
+    throw new Error(`Gagal menarik data dari sheet "BUKU INDUK SISWA": ${e.message || e}`);
+  }
+
+  throw new Error('Berkas spreadsheet "BUKU_INDUK_SISWA_DAN_ALUMNI" ditemukan, tetapi tidak berisi data siswa yang valid pada sheet "BUKU INDUK SISWA".');
 };
 
 /**

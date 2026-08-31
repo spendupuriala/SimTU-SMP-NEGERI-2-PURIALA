@@ -351,6 +351,32 @@ export interface PembuatSuratDetail {
   penghasilanTotal?: string;
   catatanKhusus?: string;
   isiSuratTambahan?: string;
+  // Fields for Surat Izin Kegiatan Siswa
+  namaKegiatan?: string;
+  penyelenggaraKegiatan?: string;
+  tempatKegiatan?: string;
+  tglMulaiKegiatan?: string;
+  tglSelesaiKegiatan?: string;
+  dispensasiBelajar?: string;
+  // Fields for Surat Keterangan Siap Menerima Siswa Pindahan
+  sekolahAsal?: string;
+  kelasDiterima?: string;
+  tahunPelajaranDiterima?: string;
+  alasanDiterima?: string;
+  // Fields for Surat Pemberitahuan Orang Tua Siswa terkait Pelanggaran Siswa
+  bentukPelanggaran?: string;
+  poinPelanggaran?: string;
+  hariTanggalMenghadap?: string;
+  waktuMenghadap?: string;
+  tempatMenghadap?: string;
+  menghadapKepada?: string;
+  // Fields for Surat Pemberitahuan Skorsing
+  alasanSkorsing?: string;
+  lamaSkorsing?: string;
+  tglMulaiSkorsing?: string;
+  tglSelesaiSkorsing?: string;
+  tglKembaliSekolah?: string;
+  tugasSelamaSkorsing?: string;
 }
 
 export interface PembuatSuratPenandatangan {
