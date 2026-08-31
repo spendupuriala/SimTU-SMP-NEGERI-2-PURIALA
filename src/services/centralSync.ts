@@ -404,8 +404,16 @@ export const runCentralSync = async (
 
     // B. SURAT KELUAR (Read from Sheet if found)
     let foundSuratKeluarSheet = false;
-    for (const ss of driveSpreadsheets) {
-      const tabName = findTab(ss.sheetNames, ['2026', 'SURAT KELUAR', 'Surat Keluar', 'Register', 'Buku Agenda', 'Nomor Surat', 'REGISTER']);
+    const sortedSpreadsheetsForSK = [...driveSpreadsheets].sort((a, b) => {
+      const aIsTarget = a.name === 'BUKU_AGENDA_SURAT_KELUAR';
+      const bIsTarget = b.name === 'BUKU_AGENDA_SURAT_KELUAR';
+      if (aIsTarget && !bIsTarget) return -1;
+      if (!aIsTarget && bIsTarget) return 1;
+      return 0;
+    });
+
+    for (const ss of sortedSpreadsheetsForSK) {
+      const tabName = findTab(ss.sheetNames || [], ['2026', 'SURAT KELUAR', 'Surat Keluar', 'Register', 'Buku Agenda', 'Nomor Surat', 'REGISTER']);
       if (tabName) {
         try {
           const rawRows = await readSheetData(accessToken, ss.id, tabName);

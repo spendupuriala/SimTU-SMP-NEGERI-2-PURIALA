@@ -45,6 +45,7 @@ import {
   DEFAULT_KODE_KLASIFIKASI,
   SpreadsheetSearchResult,
   ParsedSheetSuratKeluar,
+  findOrCreateSuratKeluarAgendaSheet,
 } from '../services/googleSheets';
 
 interface SuratKeluarModuleProps {
@@ -194,26 +195,22 @@ export const SuratKeluarModule: React.FC<SuratKeluarModuleProps> = ({
   const autoDetectSpreadsheet = async (token: string) => {
     try {
       setIsLoadingSheets(true);
-      const results = await searchNomorSuratSpreadsheets(token);
-      setAvailableSpreadsheets(results);
+      // Automatically find or create the TATA USAHA/02_SURAT_KELUAR/BUKU_AGENDA_SURAT_KELUAR spreadsheet
+      const target = await findOrCreateSuratKeluarAgendaSheet(token, suratList);
+      
+      setConnectedSpreadsheet({
+        id: target.spreadsheetId,
+        name: 'BUKU_AGENDA_SURAT_KELUAR',
+        folderName: 'TATA USAHA/02_SURAT_KELUAR',
+        sheetName: '2026',
+        kodeSheetName: 'KODE NOMOR SURAT',
+        webViewLink: target.webViewLink,
+      });
 
-      if (results.length > 0) {
-        // Pick the most relevant one (prioritizing "Nomor Surat" in "Tata Usaha")
-        const target = results[0];
-        setConnectedSpreadsheet({
-          id: target.id,
-          name: target.name,
-          folderName: target.folderName || 'Tata Usaha',
-          sheetName: '2026',
-          kodeSheetName: 'KODE NOMOR SURAT',
-          webViewLink: target.webViewLink || `https://docs.google.com/spreadsheets/d/${target.id}/edit`,
-        });
-
-        // Also load classification codes from sheet "KODE NOMOR SURAT"
-        loadKodeKlasifikasi(token, target.id);
-      }
+      // Also load classification codes from sheet "KODE NOMOR SURAT"
+      loadKodeKlasifikasi(token, target.spreadsheetId);
     } catch (err: any) {
-      console.warn('Auto detect spreadsheet error:', err);
+      console.warn('Auto detect/create BUKU_AGENDA_SURAT_KELUAR error:', err);
     } finally {
       setIsLoadingSheets(false);
     }
@@ -392,7 +389,7 @@ export const SuratKeluarModule: React.FC<SuratKeluarModuleProps> = ({
     }
   };
 
-  // Create new Spreadsheet template in folder 'Tata Usaha'
+  // Create new Spreadsheet template in folder 'TATA USAHA/02_SURAT_KELUAR'
   const handleCreateNewNomorSuratSheet = async () => {
     if (!googleToken) {
       if (onConnectGoogle) onConnectGoogle();
@@ -401,16 +398,16 @@ export const SuratKeluarModule: React.FC<SuratKeluarModuleProps> = ({
 
     try {
       setIsLoadingSheets(true);
-      const res = await createNomorSuratSpreadsheetWith2026(googleToken, suratList);
+      const res = await findOrCreateSuratKeluarAgendaSheet(googleToken, suratList);
       setConnectedSpreadsheet({
         id: res.spreadsheetId,
-        name: 'Nomor Surat',
-        folderName: 'Tata Usaha',
+        name: 'BUKU_AGENDA_SURAT_KELUAR',
+        folderName: 'TATA USAHA/02_SURAT_KELUAR',
         sheetName: '2026',
         webViewLink: res.webViewLink,
       });
       showNotification(
-        `File spreadsheet "Nomor Surat" dengan sheet "2026" berhasil dibuat di folder Tata Usaha Google Drive!`,
+        `File spreadsheet "BUKU_AGENDA_SURAT_KELUAR" dengan sheet "2026" berhasil disiapkan di folder TATA USAHA/02_SURAT_KELUAR!`,
         'success'
       );
       setIsSpreadsheetPickerOpen(false);

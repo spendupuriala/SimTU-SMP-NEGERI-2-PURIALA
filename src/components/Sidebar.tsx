@@ -22,6 +22,8 @@ import {
   ShieldCheck,
   X,
   Sparkles,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import { ActiveTab } from '../types';
 
@@ -48,6 +50,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onClose,
   counts,
 }) => {
+  const [skOpen, setSkOpen] = React.useState(true);
+  const [adminOpen, setAdminOpen] = React.useState(true);
+
   const handleClose = () => {
     if (onClose) onClose();
     if (setIsOpen) setIsOpen(false);
@@ -167,57 +172,83 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           {/* Kelompok Surat Keputusan (SK) */}
           <div>
-            <div className="px-3 text-[11px] font-bold text-slate-400 tracking-wider uppercase mb-1 flex items-center gap-1.5">
-              <FileSignature className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-              <span>Surat Keputusan (SK)</span>
-            </div>
-            <div className="space-y-0.5">
-              <button
-                onClick={() => handleSelectTab('sk-kbm')}
-                id="menu-sk-kbm"
-                className={navButtonClass('sk-kbm')}
-              >
-                <div className="flex items-center space-x-2.5">
-                  <Scroll className="w-4 h-4 text-center text-yellow-400 shrink-0" />
-                  <span>SK KBM & Beban Jam</span>
-                </div>
-              </button>
-              <button
-                onClick={() => handleSelectTab('sk-tugas-tambahan')}
-                id="menu-sk-tugas-tambahan"
-                className={navButtonClass('sk-tugas-tambahan')}
-              >
-                <div className="flex items-center space-x-2.5">
-                  <Award className="w-4 h-4 text-center text-amber-500 shrink-0" />
-                  <span>SK Tugas Tambahan</span>
-                </div>
-              </button>
-              <button
-                onClick={() => handleSelectTab('surat-tugas')}
-                id="menu-surat-tugas-dinas"
-                className={navButtonClass('surat-tugas')}
-              >
-                <div className="flex items-center space-x-2.5">
-                  <PlaneTakeoff className="w-4 h-4 text-center text-sky-400 shrink-0" />
-                  <span>Surat Tugas Dinas (SPT)</span>
-                </div>
-              </button>
-              <button
-                onClick={() => handleSelectTab('pembuat-surat')}
-                id="menu-pembuat-surat"
-                className={navButtonClass('pembuat-surat')}
-              >
-                <div className="flex items-center space-x-2.5">
-                  <FilePlus2 className="w-4 h-4 text-center text-blue-400 shrink-0" />
-                  <span>Pembuat Surat</span>
-                </div>
-                {counts?.pembuatSurat !== undefined && (
-                  <span className="text-[10px] bg-blue-500/30 text-blue-200 px-1.5 py-0.2 rounded font-mono">
-                    {counts.pembuatSurat}
-                  </span>
-                )}
-              </button>
-            </div>
+            <button
+              onClick={() => setSkOpen(!skOpen)}
+              className="w-full flex items-center justify-between px-3 py-2 text-slate-400 hover:text-white transition-colors duration-150 text-left"
+            >
+              <div className="flex items-center space-x-2.5 text-[11px] font-bold tracking-wider uppercase">
+                <FileSignature className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span>Surat Keputusan (SK)</span>
+              </div>
+              {skOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
+            </button>
+            {skOpen && (
+              <div className="mt-1 pl-3 border-l border-slate-800 space-y-0.5 ml-3">
+                <button
+                  onClick={() => handleSelectTab('sk-kbm')}
+                  id="menu-sk-kbm"
+                  className={navButtonClass('sk-kbm')}
+                >
+                  <div className="flex items-center space-x-2.5">
+                    <Scroll className="w-4 h-4 text-center text-yellow-400 shrink-0" />
+                    <span>SK KBM & Beban Ajar</span>
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleSelectTab('sk-tugas-tambahan')}
+                  id="menu-sk-tugas-tambahan"
+                  className={navButtonClass('sk-tugas-tambahan')}
+                >
+                  <div className="flex items-center space-x-2.5">
+                    <Award className="w-4 h-4 text-center text-amber-500 shrink-0" />
+                    <span>SK Tugas</span>
+                  </div>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Kelompok Administrasi */}
+          <div>
+            <button
+              onClick={() => setAdminOpen(!adminOpen)}
+              className="w-full flex items-center justify-between px-3 py-2 text-slate-400 hover:text-white transition-colors duration-150 text-left"
+            >
+              <div className="flex items-center space-x-2.5 text-[11px] font-bold tracking-wider uppercase">
+                <FilePlus2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                <span>Administrasi</span>
+              </div>
+              {adminOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
+            </button>
+            {adminOpen && (
+              <div className="mt-1 pl-3 border-l border-slate-800 space-y-0.5 ml-3">
+                <button
+                  onClick={() => handleSelectTab('surat-tugas')}
+                  id="menu-surat-tugas-dinas"
+                  className={navButtonClass('surat-tugas')}
+                >
+                  <div className="flex items-center space-x-2.5">
+                    <PlaneTakeoff className="w-4 h-4 text-center text-sky-400 shrink-0" />
+                    <span>Surat Tugas Dinas</span>
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleSelectTab('pembuat-surat')}
+                  id="menu-pembuat-surat"
+                  className={navButtonClass('pembuat-surat')}
+                >
+                  <div className="flex items-center space-x-2.5">
+                    <FilePlus2 className="w-4 h-4 text-center text-blue-400 shrink-0" />
+                    <span>Pembuat Surat</span>
+                  </div>
+                  {counts?.pembuatSurat !== undefined && (
+                    <span className="text-[10px] bg-blue-500/30 text-blue-200 px-1.5 py-0.2 rounded font-mono">
+                      {counts.pembuatSurat}
+                    </span>
+                  )}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Kelompok Kesiswaan */}

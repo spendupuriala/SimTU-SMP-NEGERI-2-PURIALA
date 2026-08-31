@@ -2473,4 +2473,170 @@ export const writeAlumniToSheet = async (
   );
 };
 
+/**
+ * Finds or Creates the Google Drive folder "02_SURAT_KELUAR" inside "TATA USAHA"
+ * and finds or creates the spreadsheet "BUKU_AGENDA_SURAT_KELUAR" with sheets "2026" & "KODE NOMOR SURAT".
+ */
+export const findOrCreateSuratKeluarAgendaSheet = async (
+  accessToken: string,
+  initialSuratList: SuratKeluar[] = []
+): Promise<{ spreadsheetId: string; webViewLink: string; folderId: string }> => {
+  // 1. Find or create folder 'TATA USAHA'
+  const tataUsahaQuery = "(name = 'TATA USAHA' or name = 'Tata Usaha') and mimeType = 'application/vnd.google-apps.folder' and trashed = false";
+  let tataUsahaId = '';
+  
+  const tuRes = await fetch(`${DRIVE_API_URL}/files?${new URLSearchParams({ q: tataUsahaQuery, fields: 'files(id)' }).toString()}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (tuRes.ok) {
+    const tuData = await tuRes.json();
+    if (tuData.files && tuData.files.length > 0) {
+      tataUsahaId = tuData.files[0].id;
+    }
+  }
+  
+  if (!tataUsahaId) {
+    const createTU = await fetch(`${DRIVE_API_URL}/files`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: 'TATA USAHA',
+        mimeType: 'application/vnd.google-apps.folder',
+      }),
+    });
+    if (createTU.ok) {
+      const tuData = await createTU.json();
+      tataUsahaId = tuData.id;
+    }
+  }
+  
+  if (!tataUsahaId) {
+    throw new Error('Gagal menemukan atau membuat folder TATA USAHA di Google Drive.');
+  }
+
+  // 2. Find or create subfolder '02_SURAT_KELUAR' inside TATA USAHA
+  const skFolderQuery = `name = '02_SURAT_KELUAR' and '${tataUsahaId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  let skFolderId = '';
+  
+  const skFolderRes = await fetch(`${DRIVE_API_URL}/files?${new URLSearchParams({ q: skFolderQuery, fields: 'files(id)' }).toString()}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (skFolderRes.ok) {
+    const skFolderData = await skFolderRes.json();
+    if (skFolderData.files && skFolderData.files.length > 0) {
+      skFolderId = skFolderData.files[0].id;
+    }
+  }
+  
+  if (!skFolderId) {
+    const createSKFolder = await fetch(`${DRIVE_API_URL}/files`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '02_SURAT_KELUAR',
+        mimeType: 'application/vnd.google-apps.folder',
+        parents: [tataUsahaId],
+      }),
+    });
+    if (createSKFolder.ok) {
+      const skFolderData = await createSKFolder.json();
+      skFolderId = skFolderData.id;
+    }
+  }
+  
+  if (!skFolderId) {
+    throw new Error('Gagal menemukan atau membuat subfolder TATA USAHA/02_SURAT_KELUAR di Google Drive.');
+  }
+
+  // 3. Find if spreadsheet "BUKU_AGENDA_SURAT_KELUAR" exists in '02_SURAT_KELUAR'
+  const sheetQuery = `mimeType = 'application/vnd.google-apps.spreadsheet' and name = 'BUKU_AGENDA_SURAT_KELUAR' and '${skFolderId}' in parents and trashed = false`;
+  let spreadsheetId = '';
+  let webViewLink = '';
+
+  const sheetRes = await fetch(`${DRIVE_API_URL}/files?${new URLSearchParams({ q: sheetQuery, fields: 'files(id, webViewLink)' }).toString()}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (sheetRes.ok) {
+    const sheetData = await sheetRes.json();
+    if (sheetData.files && sheetData.files.length > 0) {
+      spreadsheetId = sheetData.files[0].id;
+      webViewLink = sheetData.files[0].webViewLink;
+    }
+  }
+
+  // 4. If not exists, create new Spreadsheet with name "BUKU_AGENDA_SURAT_KELUAR"
+  if (!spreadsheetId) {
+    const createSheet = await fetch(SHEETS_API_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        properties: {
+          title: 'BUKU_AGENDA_SURAT_KELUAR',
+        },
+        sheets: [
+          {
+            properties: {
+              title: '2026',
+              gridProperties: {
+                frozenRowCount: 1,
+              },
+            },
+          },
+          {
+            properties: {
+              title: 'KODE NOMOR SURAT',
+              gridProperties: {
+                frozenRowCount: 1,
+              },
+            },
+          },
+        ],
+      }),
+    });
+
+    if (createSheet.ok) {
+      const createdData = await createSheet.json();
+      spreadsheetId = createdData.spreadsheetId;
+      webViewLink = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+
+      // Move spreadsheet to folder '02_SURAT_KELUAR'
+      await fetch(`${DRIVE_API_URL}/files/${spreadsheetId}?addParents=${skFolderId}&fields=id,parents`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      // Write initial/default classification codes to sheet 'KODE NOMOR SURAT'
+      try {
+        await writeKodeKlasifikasiToSheet(accessToken, spreadsheetId, DEFAULT_KODE_KLASIFIKASI, 'KODE NOMOR SURAT');
+      } catch (codesErr) {
+        console.warn('Non-fatal: could not write initial classification codes:', codesErr);
+      }
+
+      // Write initial SuratKeluar list if provided
+      if (initialSuratList && initialSuratList.length > 0) {
+        try {
+          await writeSuratKeluarToSheet(accessToken, spreadsheetId, initialSuratList, '2026');
+        } catch (writeErr) {
+          console.warn('Non-fatal: could not populate initial surat list:', writeErr);
+        }
+      }
+    } else {
+      const errDetail = await createSheet.json().catch(() => ({}));
+      throw new Error(errDetail?.error?.message || 'Gagal membuat file spreadsheet BUKU_AGENDA_SURAT_KELUAR');
+    }
+  }
+
+  return { spreadsheetId, webViewLink, folderId: skFolderId };
+};
+
+
 
