@@ -47,7 +47,7 @@ import {
   LOGO_TUT_WURI_BASE64,
   terbilangHari,
 } from '../utils/skTemplates';
-import { getHighestNomorUrutFromLists } from '../utils/suratTemplates';
+import { getHighestNomorUrutFromLists, getRomanMonth } from '../utils/suratTemplates';
 import {
   findSuratTugasTemplateInDrive,
   findSPPDTemplateInDrive,
@@ -127,12 +127,23 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
     return highest > 0 ? highest + 1 : (tugasList.length + 1);
   };
 
-  const nextNumber = String(getNextNomorUrut()).padStart(3, '0');
+  const getSptAndSppdNumbers = () => {
+    const sptUrut = getNextNomorUrut();
+    const sppdUrut = sptUrut + 1;
+    return {
+      sptNum: String(sptUrut).padStart(3, '0'),
+      sppdNum: String(sppdUrut).padStart(3, '0')
+    };
+  };
+
+  const { sptNum, sppdNum } = getSptAndSppdNumbers();
+  const currentMonthRoman = getRomanMonth(new Date().getMonth());
+  const currentYear = new Date().getFullYear();
 
   const [formData, setFormData] = useState<Partial<SuratTugasDinas>>({
     kodeKlasifikasi: '090',
-    noSuratTugas: `090/${nextNumber}/SMP.02/ST/VII/2026`,
-    noSPPD: `094/${nextNumber}/SPPD/SMP.02/VII/2026`,
+    noSuratTugas: `090/${sptNum}/SMP.02/ST/${currentMonthRoman}/${currentYear}`,
+    noSPPD: `094/${sppdNum}/SPPD/SMP.02/${currentMonthRoman}/${currentYear}`,
     dasarPenugasan: 'Kepentingan Dinas Operasional Sekolah dan Pembinaan Tugas Tenaga Kependidikan',
     personil: [
       {
@@ -187,13 +198,16 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
   };
 
   const handleKodeKlasifikasiChange = (newKode: string) => {
+    const { sptNum } = getSptAndSppdNumbers();
+    const curMonthRoman = getRomanMonth(new Date().getMonth());
+    const curYear = new Date().getFullYear();
     const parts = (formData.noSuratTugas || '').split('/');
     let updatedNoSurat = formData.noSuratTugas || '';
     if (parts.length > 1) {
       parts[0] = newKode;
       updatedNoSurat = parts.join('/');
     } else {
-      updatedNoSurat = `${newKode}/${nextNumber}/SMP.02/ST/VII/2026`;
+      updatedNoSurat = `${newKode}/${sptNum}/SMP.02/ST/${curMonthRoman}/${curYear}`;
     }
     setFormData({
       ...formData,
@@ -203,12 +217,14 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
   };
 
   const handleOpenAdd = () => {
-    const nextNum = nextNumber;
+    const { sptNum, sppdNum } = getSptAndSppdNumbers();
+    const curMonthRoman = getRomanMonth(new Date().getMonth());
+    const curYear = new Date().getFullYear();
     setEditingItem(null);
     setFormData({
       kodeKlasifikasi: '090',
-      noSuratTugas: `090/${nextNum}/SMP.02/ST/VII/2026`,
-      noSPPD: `094/${nextNum}/SPPD/SMP.02/VII/2026`,
+      noSuratTugas: `090/${sptNum}/SMP.02/ST/${curMonthRoman}/${curYear}`,
+      noSPPD: `094/${sppdNum}/SPPD/SMP.02/${curMonthRoman}/${curYear}`,
       dasarPenugasan: 'Kepentingan Dinas Operasional Sekolah dan Pembinaan Tugas Tenaga Kependidikan',
       personil: [
         {
@@ -261,11 +277,14 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
         drivePath: 'TATA USAHA/SURAT',
       } as SuratTugasDinas);
     } else {
+      const { sptNum, sppdNum } = getSptAndSppdNumbers();
+      const curMonthRoman = getRomanMonth(new Date().getMonth());
+      const curYear = new Date().getFullYear();
       const newItem: SuratTugasDinas = {
         id: `ST-${Date.now()}`,
         kodeKlasifikasi: selectedKode,
-        noSuratTugas: formData.noSuratTugas || `${selectedKode}/${nextNumber}/SMP.02/ST/VII/2026`,
-        noSPPD: formData.noSPPD || `094/${nextNumber}/SPPD/SMP.02/VII/2026`,
+        noSuratTugas: formData.noSuratTugas || `${selectedKode}/${sptNum}/SMP.02/ST/${curMonthRoman}/${curYear}`,
+        noSPPD: formData.noSPPD || `094/${sppdNum}/SPPD/SMP.02/${curMonthRoman}/${curYear}`,
         dasarPenugasan: formData.dasarPenugasan || 'Kepentingan Dinas Operasional Sekolah',
         personil:
           formData.personil && formData.personil.length > 0
