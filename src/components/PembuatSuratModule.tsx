@@ -41,6 +41,8 @@ import {
   KodeKlasifikasiSurat,
   SuratKeluar,
   SuratTugasDinas,
+  SKKBM,
+  SKTugasTambahan,
 } from '../types';
 import { DEFAULT_KODE_KLASIFIKASI } from '../services/googleSheets';
 import {
@@ -59,6 +61,8 @@ interface PembuatSuratModuleProps {
   suratList?: PembuatSuratRecord[];
   suratKeluarList?: SuratKeluar[];
   suratTugasList?: SuratTugasDinas[];
+  skKBMList?: SKKBM[];
+  skTugasTambahanList?: SKTugasTambahan[];
   onAdd: (surat: PembuatSuratRecord) => void;
   onUpdate: (surat: PembuatSuratRecord) => void;
   onDelete: (id: string) => void;
@@ -76,6 +80,8 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
   suratList = [],
   suratKeluarList = [],
   suratTugasList = [],
+  skKBMList = [],
+  skTugasTambahanList = [],
   onAdd,
   onUpdate,
   onDelete,
@@ -156,6 +162,168 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
   const [formPenandatanganNama, setFormPenandatanganNama] = useState<string>(identitasSekolah.namaKepalaSekolah || 'ADRIS, S.Pd.,M.Si');
   const [formPenandatanganNip, setFormPenandatanganNip] = useState<string>(identitasSekolah.nipKepalaSekolah || '19710110 199412 1 0012');
   const [formPenandatanganPangkat, setFormPenandatanganPangkat] = useState<string>(identitasSekolah.pangkatKepsek || 'Pembina Tk. I, IV/b');
+  const [formPenandatanganLabel, setFormPenandatanganLabel] = useState<string>('Kepala Sekolah');
+
+  const formatPTKName = (g: GuruPTK) => {
+    const front = g.gelarDepan ? g.gelarDepan.trim() + ' ' : '';
+    const back = g.gelarBelakang ? ', ' + g.gelarBelakang.trim() : '';
+    return front + g.namaLengkap.trim() + back;
+  };
+
+  const getStructuralPTKByTipe = (tipe: PenandatanganTipe) => {
+    if (!guruPTKList || guruPTKList.length === 0) return null;
+
+    if (tipe === 'kepala_sekolah') {
+      return guruPTKList.find(g => {
+        const j = (g.jabatan || '').toLowerCase();
+        return j.includes('kepala sekolah') && !j.includes('plt') && !j.includes('pjs') && !j.includes('wakil');
+      }) || null;
+    }
+
+    if (tipe === 'an_kepala_sekolah_tu') {
+      return guruPTKList.find(g => {
+        const j = (g.jabatan || '').toLowerCase();
+        return (j.includes('tata usaha') || j.includes('tu')) && (j.includes('kepala') || j.includes('ka') || j.includes('koordinator'));
+      }) || null;
+    }
+
+    if (tipe === 'plt_kepala_sekolah') {
+      return guruPTKList.find(g => {
+        const j = (g.jabatan || '').toLowerCase();
+        return j.includes('plt') || j.includes('pelaksana tugas');
+      }) || null;
+    }
+
+    if (tipe === 'an_wakasek') {
+      return guruPTKList.find(g => {
+        const j = (g.jabatan || '').toLowerCase();
+        return (j.includes('wakasek') || j.includes('wakil kepala')) && !j.includes('kurikulum') && !j.includes('kesiswaan') && !j.includes('humas');
+      }) || null;
+    }
+
+    if (tipe === 'wakasek_kurikulum') {
+      return guruPTKList.find(g => {
+        const j = (g.jabatan || '').toLowerCase();
+        const n = g.namaLengkap.toLowerCase();
+        return (
+          (j.includes('kurikulum') && (j.includes('wakil') || j.includes('wakasek') || j.includes('waka'))) ||
+          n.includes('suherman') || (n.includes('hasnawati') && j.includes('wak'))
+        );
+      }) || null;
+    }
+
+    if (tipe === 'wakasek_kesiswaan') {
+      return guruPTKList.find(g => {
+        const j = (g.jabatan || '').toLowerCase();
+        const n = g.namaLengkap.toLowerCase();
+        return (
+          (j.includes('kesiswaan') && (j.includes('wakil') || j.includes('wakasek') || j.includes('waka'))) ||
+          n.includes('disnawati')
+        );
+      }) || null;
+    }
+
+    if (tipe === 'wakasek_humas') {
+      return guruPTKList.find(g => {
+        const j = (g.jabatan || '').toLowerCase();
+        const n = g.namaLengkap.toLowerCase();
+        return (
+          (j.includes('humas') && (j.includes('wakil') || j.includes('wakasek') || j.includes('waka'))) ||
+          n.includes('nisrayani')
+        );
+      }) || null;
+    }
+
+    return null;
+  };
+
+  const getDynamicSignersList = () => {
+    const list = [
+      {
+        tipe: 'kepala_sekolah',
+        label: 'Kepala Sekolah (Definitif)',
+        desc: (() => {
+          const p = getStructuralPTKByTipe('kepala_sekolah');
+          return p ? formatPTKName(p) : (identitasSekolah.namaKepalaSekolah || 'ADRIS, S.Pd.,M.Si');
+        })()
+      },
+      {
+        tipe: 'an_kepala_sekolah_tu',
+        label: 'a.n. Kepala Sekolah - Ka. TU',
+        desc: (() => {
+          const p = getStructuralPTKByTipe('an_kepala_sekolah_tu');
+          return p ? formatPTKName(p) : (identitasSekolah.namaKepalaTU || 'Rustam, S.Pd.I');
+        })()
+      },
+      {
+        tipe: 'plt_kepala_sekolah',
+        label: 'Plt. Kepala Sekolah',
+        desc: (() => {
+          const p = getStructuralPTKByTipe('plt_kepala_sekolah');
+          return p ? formatPTKName(p) : 'Pelaksana Tugas';
+        })()
+      }
+    ];
+
+    if (formTarget === 'siswa') {
+      list.push(
+        {
+          tipe: 'wakasek_kurikulum',
+          label: 'a.n. Kepala Sekolah - Wakasek Kurikulum',
+          desc: (() => {
+            const p = getStructuralPTKByTipe('wakasek_kurikulum');
+            return p ? formatPTKName(p) : 'SUHERMAN, S. Pd.Gr';
+          })()
+        },
+        {
+          tipe: 'wakasek_kesiswaan',
+          label: 'a.n. Kepala Sekolah - Wakasek Kesiswaan',
+          desc: (() => {
+            const p = getStructuralPTKByTipe('wakasek_kesiswaan');
+            return p ? formatPTKName(p) : 'DISNAWATI, S.Pd.';
+          })()
+        },
+        {
+          tipe: 'wakasek_humas',
+          label: 'a.n. Kepala Sekolah - Wakasek Humas',
+          desc: (() => {
+            const p = getStructuralPTKByTipe('wakasek_humas');
+            return p ? formatPTKName(p) : 'NISRAYANI DAUD DIGA, S. Pd.Gr';
+          })()
+        }
+      );
+    } else {
+      list.push({
+        tipe: 'an_wakasek',
+        label: 'a.n. Kepala Sekolah - Wakasek',
+        desc: (() => {
+          const p = getStructuralPTKByTipe('an_wakasek');
+          return p ? formatPTKName(p) : 'Sudirman, S.Pd., M.Pd';
+        })()
+      });
+    }
+
+    return list;
+  };
+
+  const structuralOfficials = useMemo(() => {
+    if (!guruPTKList) return [];
+    return guruPTKList.filter(g => {
+      const j = (g.jabatan || '').toLowerCase();
+      return (
+        j.includes('kepala sekolah') ||
+        j.includes('wakil') ||
+        j.includes('wakasek') ||
+        j.includes('tata usaha') ||
+        j.includes('tu') ||
+        j.includes('plt') ||
+        j.includes('kurikulum') ||
+        j.includes('kesiswaan') ||
+        j.includes('sarpras') ||
+        j.includes('humas')
+      );
+    });
+  }, [guruPTKList]);
 
   // Async upload loading state
   const [isUploadingToDrive, setIsUploadingToDrive] = useState<boolean>(false);
@@ -223,7 +391,7 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
 
   // Helper to compute next sequential number across all modules and agendas
   const getNextNomorUrut = (): number => {
-    const highest = getHighestNomorUrutFromLists(suratList, suratKeluarList, suratTugasList);
+    const highest = getHighestNomorUrutFromLists(suratList, suratKeluarList, suratTugasList, skKBMList, skTugasTambahanList);
     return highest > 0 ? highest + 1 : (suratList.length + 1);
   };
 
@@ -262,10 +430,20 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
     setFormProgramStudi('');
     setFormGajiPokok('3.500.000');
     setFormPenghasilanTotal('4.850.000');
+    
+    // Dynamic Principal lookup from PTK database
+    const principalPTK = getStructuralPTKByTipe('kepala_sekolah');
     setFormPenandatanganTipe('kepala_sekolah');
-    setFormPenandatanganNama(identitasSekolah.namaKepalaSekolah || 'ADRIS, S.Pd.,M.Si');
-    setFormPenandatanganNip(identitasSekolah.nipKepalaSekolah || '19710110 199412 1 0012');
-    setFormPenandatanganPangkat(identitasSekolah.pangkatKepsek || 'Pembina Tk. I, IV/b');
+    if (principalPTK) {
+      setFormPenandatanganNama(formatPTKName(principalPTK));
+      setFormPenandatanganNip(principalPTK.nip || '');
+      setFormPenandatanganPangkat(principalPTK.pangkatGolongan || '');
+    } else {
+      setFormPenandatanganNama(identitasSekolah.namaKepalaSekolah || 'ADRIS, S.Pd.,M.Si');
+      setFormPenandatanganNip(identitasSekolah.nipKepalaSekolah || '19710110 199412 1 0012');
+      setFormPenandatanganPangkat(identitasSekolah.pangkatKepsek || 'Pembina Tk. I, IV/b');
+    }
+    setFormPenandatanganLabel('Kepala Sekolah');
 
     setIsFormModalOpen(true);
   };
@@ -300,6 +478,7 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
     setFormPenandatanganNama(surat.penandatangan.nama);
     setFormPenandatanganNip(surat.penandatangan.nip);
     setFormPenandatanganPangkat(surat.penandatangan.pangkatGol || '');
+    setFormPenandatanganLabel(surat.penandatangan.labelJabatan || 'Kepala Sekolah');
 
     setIsFormModalOpen(true);
   };
@@ -400,22 +579,54 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
   // Change Penandatangan option in Step 5
   const handleSelectPenandatanganTipe = (tipe: PenandatanganTipe) => {
     setFormPenandatanganTipe(tipe);
-    if (tipe === 'kepala_sekolah') {
-      setFormPenandatanganNama(identitasSekolah.namaKepalaSekolah || 'ADRIS, S.Pd.,M.Si');
-      setFormPenandatanganNip(identitasSekolah.nipKepalaSekolah || '19710110 199412 1 0012');
-      setFormPenandatanganPangkat(identitasSekolah.pangkatKepsek || 'Pembina Tk. I, IV/b');
-    } else if (tipe === 'an_kepala_sekolah_tu') {
-      setFormPenandatanganNama(identitasSekolah.namaKepalaTU || 'Rustam, S.Pd.I');
-      setFormPenandatanganNip(identitasSekolah.nipKepalaTU || '19790415 200801 1 014');
-      setFormPenandatanganPangkat('Penata, III/c');
-    } else if (tipe === 'plt_kepala_sekolah') {
-      setFormPenandatanganNama(identitasSekolah.namaKepalaSekolah || 'ADRIS, S.Pd.,M.Si');
-      setFormPenandatanganNip(identitasSekolah.nipKepalaSekolah || '19710110 199412 1 0012');
-      setFormPenandatanganPangkat(identitasSekolah.pangkatKepsek || 'Pembina Tk. I, IV/b');
-    } else if (tipe === 'an_wakasek') {
-      setFormPenandatanganNama('Sudirman, S.Pd., M.Pd');
-      setFormPenandatanganNip('19750812 200003 1 004');
-      setFormPenandatanganPangkat('Pembina Tk. I, IV/b');
+    
+    let defaultLabel = 'Kepala Sekolah';
+    if (tipe === 'an_kepala_sekolah_tu') defaultLabel = 'a.n. Kepala Sekolah - Ka. TU';
+    else if (tipe === 'plt_kepala_sekolah') defaultLabel = 'Plt. Kepala Sekolah';
+    else if (tipe === 'an_wakasek') defaultLabel = 'a.n. Kepala Sekolah - Wakasek';
+    else if (tipe === 'wakasek_kurikulum') defaultLabel = 'a.n. Kepala Sekolah - Wakasek Kurikulum';
+    else if (tipe === 'wakasek_kesiswaan') defaultLabel = 'a.n. Kepala Sekolah - Wakasek Kesiswaan';
+    else if (tipe === 'wakasek_humas') defaultLabel = 'a.n. Kepala Sekolah - Wakasek Humas';
+    
+    setFormPenandatanganLabel(defaultLabel);
+    
+    // Check if there is dynamic PTK matching from the PTK database
+    const ptk = getStructuralPTKByTipe(tipe);
+    if (ptk) {
+      setFormPenandatanganNama(formatPTKName(ptk));
+      setFormPenandatanganNip(ptk.nip || '');
+      setFormPenandatanganPangkat(ptk.pangkatGolongan || '');
+    } else {
+      // Fallback
+      if (tipe === 'kepala_sekolah') {
+        setFormPenandatanganNama(identitasSekolah.namaKepalaSekolah || 'ADRIS, S.Pd.,M.Si');
+        setFormPenandatanganNip(identitasSekolah.nipKepalaSekolah || '19710110 199412 1 0012');
+        setFormPenandatanganPangkat(identitasSekolah.pangkatKepsek || 'Pembina Tk. I, IV/b');
+      } else if (tipe === 'an_kepala_sekolah_tu') {
+        setFormPenandatanganNama(identitasSekolah.namaKepalaTU || 'Rustam, S.Pd.I');
+        setFormPenandatanganNip(identitasSekolah.nipKepalaTU || '19790415 200801 1 014');
+        setFormPenandatanganPangkat('Penata, III/c');
+      } else if (tipe === 'plt_kepala_sekolah') {
+        setFormPenandatanganNama(identitasSekolah.namaKepalaSekolah || 'ADRIS, S.Pd.,M.Si');
+        setFormPenandatanganNip(identitasSekolah.nipKepalaSekolah || '19710110 199412 1 0012');
+        setFormPenandatanganPangkat(identitasSekolah.pangkatKepsek || 'Pembina Tk. I, IV/b');
+      } else if (tipe === 'an_wakasek') {
+        setFormPenandatanganNama('Sudirman, S.Pd., M.Pd');
+        setFormPenandatanganNip('19750812 200003 1 004');
+        setFormPenandatanganPangkat('Pembina Tk. I, IV/b');
+      } else if (tipe === 'wakasek_kurikulum') {
+        setFormPenandatanganNama('SUHERMAN, S. Pd.Gr');
+        setFormPenandatanganNip('19881231 201903 1 013');
+        setFormPenandatanganPangkat('Penata, III/c');
+      } else if (tipe === 'wakasek_kesiswaan') {
+        setFormPenandatanganNama('DISNAWATI, S.Pd.');
+        setFormPenandatanganNip('19780815 200604 2 018');
+        setFormPenandatanganPangkat('Pembina, IV/a');
+      } else if (tipe === 'wakasek_humas') {
+        setFormPenandatanganNama('NISRAYANI DAUD DIGA, S. Pd.Gr');
+        setFormPenandatanganNip('19900312 201903 2 008');
+        setFormPenandatanganPangkat('Penata Muda Tk. I, III/b');
+      }
     }
   };
 
@@ -424,14 +635,7 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
     const tmpl = selectedTemplate;
     const now = new Date().toISOString();
 
-    let labelJabatan = 'Kepala Sekolah';
-    if (formPenandatanganTipe === 'an_kepala_sekolah_tu') {
-      labelJabatan = 'a.n. Kepala Sekolah - Ka. TU';
-    } else if (formPenandatanganTipe === 'plt_kepala_sekolah') {
-      labelJabatan = 'Plt. Kepala Sekolah';
-    } else if (formPenandatanganTipe === 'an_wakasek') {
-      labelJabatan = 'a.n. Kepala Sekolah - Wakasek';
-    }
+    const labelJabatan = formPenandatanganLabel || 'Kepala Sekolah';
 
     const effectiveKode = formKodeKlasifikasi || tmpl.kodeKlasifikasi || '421.3';
 
@@ -1580,39 +1784,93 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
                   </div>
 
                   {/* Dropdown Penandatangan */}
-                  <div className="space-y-3">
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                      Jabatan Penandatangan
-                    </label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {[
-                        { tipe: 'kepala_sekolah', label: 'Kepala Sekolah (Definitif)', desc: 'ADRIS, S.Pd.,M.Si' },
-                        { tipe: 'an_kepala_sekolah_tu', label: 'a.n. Kepala Sekolah - Ka. TU', desc: 'Rustam, S.Pd.I' },
-                        { tipe: 'plt_kepala_sekolah', label: 'Plt. Kepala Sekolah', desc: 'Pelaksana Tugas' },
-                        { tipe: 'an_wakasek', label: 'a.n. Kepala Sekolah - Wakasek', desc: 'Sudirman, S.Pd., M.Pd' },
-                      ].map((item) => (
-                        <div
-                          key={item.tipe}
-                          onClick={() => handleSelectPenandatanganTipe(item.tipe as any)}
-                          className={`p-3.5 rounded-xl border-2 cursor-pointer transition flex items-center justify-between ${
-                            formPenandatanganTipe === item.tipe
-                              ? 'border-blue-500 bg-blue-50/60 ring-2 ring-blue-500/20 font-bold text-blue-950'
-                              : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
-                          }`}
-                        >
-                          <div>
-                            <div className="text-xs font-bold">{item.label}</div>
-                            <div className="text-[11px] text-slate-500 mt-0.5">{item.desc}</div>
-                          </div>
-                          <input
-                            type="radio"
-                            name="penandatangan_tipe"
-                            checked={formPenandatanganTipe === item.tipe}
-                            onChange={() => handleSelectPenandatanganTipe(item.tipe as any)}
-                            className="w-4 h-4 text-blue-600 focus:ring-blue-500"
-                          />
+                  <div className="space-y-4">
+                    {formTarget === 'siswa' && structuralOfficials.length > 0 && (
+                      <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-4 space-y-2.5 shadow-sm">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900">
+                          <User className="w-4 h-4 text-amber-700" />
+                          <span>Pilih Pejabat Penandatangan Lintas Guru & PTK (Struktural / Fungsional):</span>
                         </div>
-                      ))}
+                        <select
+                          className="w-full px-3 py-2.5 bg-white border border-amber-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                          onChange={(e) => {
+                            const selectedId = e.target.value;
+                            const ptk = structuralOfficials.find(o => o.id === selectedId);
+                            if (ptk) {
+                              const fullName = formatPTKName(ptk);
+                              setFormPenandatanganNama(fullName);
+                              setFormPenandatanganNip(ptk.nip || '');
+                              setFormPenandatanganPangkat(ptk.pangkatGolongan || '');
+                              
+                              // Automatically match card tipe and set the correct label
+                              const jobLower = (ptk.jabatan || '').toLowerCase();
+                              if (jobLower.includes('plt')) {
+                                setFormPenandatanganTipe('plt_kepala_sekolah');
+                                setFormPenandatanganLabel('Plt. Kepala Sekolah');
+                              } else if (jobLower.includes('kepala sekolah')) {
+                                setFormPenandatanganTipe('kepala_sekolah');
+                                setFormPenandatanganLabel('Kepala Sekolah');
+                              } else if (jobLower.includes('tata usaha') || jobLower.includes('tu')) {
+                                setFormPenandatanganTipe('an_kepala_sekolah_tu');
+                                setFormPenandatanganLabel('a.n. Kepala Sekolah - Ka. TU');
+                              } else if (jobLower.includes('kurikulum')) {
+                                setFormPenandatanganTipe('wakasek_kurikulum');
+                                setFormPenandatanganLabel('a.n. Kepala Sekolah - Wakasek Kurikulum');
+                              } else if (jobLower.includes('kesiswaan')) {
+                                setFormPenandatanganTipe('wakasek_kesiswaan');
+                                setFormPenandatanganLabel('a.n. Kepala Sekolah - Wakasek Kesiswaan');
+                              } else if (jobLower.includes('humas')) {
+                                setFormPenandatanganTipe('wakasek_humas');
+                                setFormPenandatanganLabel('a.n. Kepala Sekolah - Wakasek Humas');
+                              } else if (jobLower.includes('wakasek') || jobLower.includes('wakil')) {
+                                setFormPenandatanganTipe('an_wakasek');
+                                setFormPenandatanganLabel('a.n. Kepala Sekolah - Wakasek');
+                              } else {
+                                setFormPenandatanganLabel(ptk.jabatan);
+                              }
+                            }
+                          }}
+                          defaultValue=""
+                        >
+                          <option value="" disabled>-- Pilih Pejabat / Guru dengan Tugas Tambahan --</option>
+                          {structuralOfficials.map((o) => (
+                            <option key={o.id} value={o.id}>
+                              {formatPTKName(o)} - {o.jabatan} (NIP. {o.nip || '-'})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                        Jabatan Penandatangan
+                      </label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {getDynamicSignersList().map((item) => (
+                          <div
+                            key={item.tipe}
+                            onClick={() => handleSelectPenandatanganTipe(item.tipe as any)}
+                            className={`p-3.5 rounded-xl border-2 cursor-pointer transition flex items-center justify-between ${
+                              formPenandatanganTipe === item.tipe
+                                ? 'border-blue-500 bg-blue-50/60 ring-2 ring-blue-500/20 font-bold text-blue-950'
+                                : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
+                            }`}
+                          >
+                            <div>
+                              <div className="text-xs font-bold">{item.label}</div>
+                              <div className="text-[11px] text-slate-500 mt-0.5">{item.desc}</div>
+                            </div>
+                            <input
+                              type="radio"
+                              name="penandatangan_tipe"
+                              checked={formPenandatanganTipe === item.tipe}
+                              onChange={() => handleSelectPenandatanganTipe(item.tipe as any)}
+                              className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                            />
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
 

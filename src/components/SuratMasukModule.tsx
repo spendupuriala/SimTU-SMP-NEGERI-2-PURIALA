@@ -371,6 +371,17 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
     }
   };
 
+  useEffect(() => {
+    const handlePullEvent = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail?.moduleName === 'Surat Masuk') {
+        handleDirectReplaceFromSheet();
+      }
+    };
+    window.addEventListener('simtu-pull-data', handlePullEvent);
+    return () => window.removeEventListener('simtu-pull-data', handlePullEvent);
+  }, [googleToken, connectedSpreadsheet, suratList]);
+
   // Confirm import from preview modal
   const handleApplyImport = (mode: 'replace' | 'merge') => {
     if (!parsedPreviewData || parsedPreviewData.suratList.length === 0) {

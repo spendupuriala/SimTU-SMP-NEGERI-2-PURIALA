@@ -305,6 +305,17 @@ export const SuratKeluarModule: React.FC<SuratKeluarModuleProps> = ({
     }
   };
 
+  useEffect(() => {
+    const handlePullEvent = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail?.moduleName === 'Surat Keluar') {
+        handleDirectReplaceFromSheet();
+      }
+    };
+    window.addEventListener('simtu-pull-data', handlePullEvent);
+    return () => window.removeEventListener('simtu-pull-data', handlePullEvent);
+  }, [googleToken, connectedSpreadsheet, suratList]);
+
   // Fetch / Import data with Preview from Google Sheets "2026"
   const handleFetchFromGoogleSheet = async () => {
     if (!googleToken) {

@@ -35,6 +35,8 @@ import {
   KodeKlasifikasiSurat,
   SuratKeluar,
   PembuatSuratRecord,
+  SKKBM,
+  SKTugasTambahan,
 } from '../types';
 import { DEFAULT_KODE_KLASIFIKASI } from '../services/googleSheets';
 import {
@@ -60,6 +62,8 @@ interface SuratTugasDinasModuleProps {
   tugasList: SuratTugasDinas[];
   suratKeluarList?: SuratKeluar[];
   pembuatSuratList?: PembuatSuratRecord[];
+  skKBMList?: SKKBM[];
+  skTugasTambahanList?: SKTugasTambahan[];
   onAdd: (item: SuratTugasDinas) => void;
   onUpdate: (item: SuratTugasDinas) => void;
   onDelete: (id: string) => void;
@@ -93,6 +97,8 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
   tugasList,
   suratKeluarList = [],
   pembuatSuratList = [],
+  skKBMList = [],
+  skTugasTambahanList = [],
   onAdd,
   onUpdate,
   onDelete,
@@ -123,7 +129,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
 
   const getNextNomorUrut = (): number => {
-    const highest = getHighestNomorUrutFromLists(tugasList, suratKeluarList, pembuatSuratList);
+    const highest = getHighestNomorUrutFromLists(tugasList, suratKeluarList, pembuatSuratList, skKBMList, skTugasTambahanList);
     return highest > 0 ? highest + 1 : (tugasList.length + 1);
   };
 

@@ -327,6 +327,17 @@ export const GuruPTKModule: React.FC<GuruPTKModuleProps> = ({
     }
   };
 
+  React.useEffect(() => {
+    const handlePullEvent = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail?.moduleName === 'Data Guru & PTK' || customEvent.detail?.moduleName === 'Data Guru' || customEvent.detail?.moduleName === 'Kepegawaian') {
+        handlePullFromDrive();
+      }
+    };
+    window.addEventListener('simtu-pull-data', handlePullEvent);
+    return () => window.removeEventListener('simtu-pull-data', handlePullEvent);
+  }, [googleToken, isGoogleConnected, googleUser]);
+
   // -------------------------------------------------------------
   // FILE UPLOAD HANDLING FOR PTK BERKAS DIGITAL
   // -------------------------------------------------------------

@@ -138,6 +138,17 @@ export const BukuIndukModule: React.FC<BukuIndukModuleProps> = ({
     }
   };
 
+  React.useEffect(() => {
+    const handlePullEvent = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail?.moduleName === 'Buku Induk Siswa' || customEvent.detail?.moduleName === 'Kesiswaan') {
+        handlePullFromDrive();
+      }
+    };
+    window.addEventListener('simtu-pull-data', handlePullEvent);
+    return () => window.removeEventListener('simtu-pull-data', handlePullEvent);
+  }, [googleToken, isGoogleConnected, googleUser]);
+
   const [formData, setFormData] = useState<Partial<Siswa>>({
     nis: `252607${String(siswaList.length + 1).padStart(3, '0')}`,
     nisn: '',

@@ -315,7 +315,10 @@ export type PenandatanganTipe =
   | 'kepala_sekolah'
   | 'an_kepala_sekolah_tu'
   | 'plt_kepala_sekolah'
-  | 'an_wakasek';
+  | 'an_wakasek'
+  | 'wakasek_kurikulum'
+  | 'wakasek_kesiswaan'
+  | 'wakasek_humas';
 
 export interface PembuatSuratSubjekData {
   idRef?: string;

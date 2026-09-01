@@ -292,7 +292,7 @@ export function getHighestNomorUrutFromLists(
       if (typeof item === 'string') {
         candidateNumber = item;
       } else if (item && typeof item === 'object') {
-        candidateNumber = item.noSurat || item.noSuratTugas || item.noAgenda;
+        candidateNumber = item.noSurat || item.noSuratTugas || item.noAgenda || item.noSK;
       }
 
       if (candidateNumber) {

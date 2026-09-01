@@ -1,4 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getFirestore } from 'firebase/firestore';
 import {
   getAuth,
   signInWithPopup,
@@ -12,6 +13,7 @@ import firebaseConfig from '../../firebase-applet-config.json';
 // Initialize Firebase App singleton safely
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
+export const db = getFirestore(app);
 
 // Configure Google Auth Provider with Drive & Sheets scopes
 export const GOOGLE_DRIVE_SCOPES = [
@@ -41,21 +43,22 @@ const STORAGE_EXPIRY_KEY = 'SIMTU_GDRIVE_EXPIRY_V2';
 let globalAuthSuccessCallback: ((user: any, token: string) => void) | null = null;
 let globalAuthFailureCallback: (() => void) | null = null;
 
-// Helper to check and retrieve a strictly valid stored token
+// Helper to check and retrieve a stored token candidate
 export const getValidStoredToken = (): string | null => {
   try {
     const stored = localStorage.getItem(STORAGE_TOKEN_KEY) || sessionStorage.getItem(STORAGE_TOKEN_KEY);
     const expiry = localStorage.getItem(STORAGE_EXPIRY_KEY);
-    if (stored && expiry) {
-      const expTime = parseInt(expiry, 10);
-      // Valid if expiration timestamp is in the future
-      if (Number.isFinite(expTime) && Date.now() < expTime) {
+    if (stored) {
+      if (expiry) {
+        const expTime = parseInt(expiry, 10);
+        // If it's within the artificial 55 minutes, or within a 2-hour grace period, keep using it
+        // We will let background verification handle any actual expirations smoothly
+        if (Number.isFinite(expTime) && Date.now() < expTime + 120 * 60 * 1000) {
+          return stored;
+        }
+      } else {
         return stored;
       }
-    }
-    // Clean up stale or expired token
-    if (stored || expiry) {
-      persistToken(null);
     }
     return null;
   } catch {
@@ -72,7 +75,7 @@ export const persistToken = (token: string | null, user?: any) => {
     if (token) {
       localStorage.setItem(STORAGE_TOKEN_KEY, token);
       sessionStorage.setItem(STORAGE_TOKEN_KEY, token);
-      // Google OAuth access tokens are valid for 1 hour; set safety expiry to 55 minutes
+      // Set initial expiry to 55 minutes
       localStorage.setItem(STORAGE_EXPIRY_KEY, String(Date.now() + 55 * 60 * 1000));
       if (user) {
         localStorage.setItem(
@@ -108,6 +111,7 @@ export const getStoredGoogleUser = (): any | null => {
 
 /**
  * Verify whether an OAuth access token is still accepted by Google APIs
+ * If valid, automatically extends its local lifetime!
  */
 export const verifyGoogleAccessToken = async (token: string): Promise<boolean> => {
   if (!token) return false;
@@ -115,11 +119,17 @@ export const verifyGoogleAccessToken = async (token: string): Promise<boolean> =
     const res = await fetch(`https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=${encodeURIComponent(token)}`);
     if (res.ok) {
       const info = await res.json();
-      return Boolean(info && (info.expires_in === undefined || Number(info.expires_in) > 0));
+      const isValid = Boolean(info && (info.expires_in === undefined || Number(info.expires_in) > 0));
+      if (isValid) {
+        // Auto Renew: extend local expiration time since it is verified as active
+        localStorage.setItem(STORAGE_EXPIRY_KEY, String(Date.now() + 55 * 60 * 1000));
+      }
+      return isValid;
     }
     return false;
   } catch {
-    return false;
+    // If there is a network error, keep it true temporarily to avoid unnecessary logouts
+    return true;
   }
 };
 
@@ -145,25 +155,40 @@ export const initAuth = (
   const validToken = getValidStoredToken();
   const savedUser = getStoredGoogleUser();
 
+  // Step 1: Optimistic restore (Zero-flicker loading)
   if (validToken && savedUser) {
     cachedAccessToken = validToken;
-    // Asynchronously verify token with Google
+    if (onAuthSuccess) {
+      onAuthSuccess(savedUser, validToken);
+    }
+    
+    // Asynchronously verify token with Google in background
     verifyGoogleAccessToken(validToken).then((isValid) => {
-      if (isValid) {
-        if (onAuthSuccess) onAuthSuccess(savedUser, validToken);
-      } else {
-        // Token was revoked or expired on server side
+      if (!isValid) {
+        // Token is actually invalid/expired, invalidate cleanly
         invalidateGoogleAuth();
       }
     });
   } else {
-    // If no valid token, clean up and fail early
+    // No saved session
     cachedAccessToken = null;
     persistToken(null);
     if (onAuthFailure) onAuthFailure();
   }
 
-  return onAuthStateChanged(auth, async (user: User | null) => {
+  // Periodic automatic token validator (runs every 10 minutes to auto-renew expiry)
+  const validationInterval = setInterval(() => {
+    const token = cachedAccessToken || getValidStoredToken();
+    if (token) {
+      verifyGoogleAccessToken(token).then((isValid) => {
+        if (!isValid) {
+          invalidateGoogleAuth();
+        }
+      });
+    }
+  }, 10 * 60 * 1000);
+
+  const authUnsubscribe = onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
       const activeToken = cachedAccessToken || getValidStoredToken();
       if (activeToken) {
@@ -184,6 +209,11 @@ export const initAuth = (
       }
     }
   });
+
+  return () => {
+    clearInterval(validationInterval);
+    authUnsubscribe();
+  };
 };
 
 // Must be called from a button click or user interaction

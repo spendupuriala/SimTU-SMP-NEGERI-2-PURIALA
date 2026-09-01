@@ -29,7 +29,16 @@ import {
   MapPin,
   HelpCircle,
 } from 'lucide-react';
-import { SKKBM, SKKBMItem, IdentitasSekolah, PTK } from '../types';
+import {
+  SKKBM,
+  SKKBMItem,
+  IdentitasSekolah,
+  PTK,
+  SuratKeluar,
+  SuratTugasDinas,
+  PembuatSuratRecord,
+  SKTugasTambahan,
+} from '../types';
 import {
   fetchSKFolderFiles,
   uploadSKKBMDocumentToDrive,
@@ -49,9 +58,14 @@ import {
   DEFAULT_MENGINGAT_SK,
   DEFAULT_MEMPERHATIKAN_SK_LIST,
 } from '../utils/skTemplates';
+import { getHighestNomorUrutFromLists, getRomanMonth } from '../utils/suratTemplates';
 
 interface SKKBMModuleProps {
   skList: SKKBM[];
+  suratKeluarList?: SuratKeluar[];
+  suratTugasList?: SuratTugasDinas[];
+  pembuatSuratList?: PembuatSuratRecord[];
+  skTugasTambahanList?: SKTugasTambahan[];
   onAdd: (sk: SKKBM) => void;
   onUpdate: (sk: SKKBM) => void;
   onDelete: (id: string) => void;
@@ -65,6 +79,10 @@ interface SKKBMModuleProps {
 
 export const SKKBMModule: React.FC<SKKBMModuleProps> = ({
   skList,
+  suratKeluarList = [],
+  suratTugasList = [],
+  pembuatSuratList = [],
+  skTugasTambahanList = [],
   onAdd,
   onUpdate,
   onDelete,
@@ -77,6 +95,17 @@ export const SKKBMModule: React.FC<SKKBMModuleProps> = ({
 }) => {
   const [selectedSKId, setSelectedSKId] = useState<string>(skList[0]?.id || '');
   const selectedSK = skList.find((s) => s.id === selectedSKId) || skList[0] || null;
+
+  const getNextNomorUrut = (): number => {
+    const highest = getHighestNomorUrutFromLists(
+      skList,
+      suratKeluarList,
+      suratTugasList,
+      pembuatSuratList,
+      skTugasTambahanList
+    );
+    return highest > 0 ? highest + 1 : (skList.length + 1);
+  };
 
   // Modals
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
@@ -142,6 +171,33 @@ export const SKKBMModule: React.FC<SKKBMModuleProps> = ({
     tempatPenetapan: 'Unggulino',
     tentang: '',
   });
+
+  const handleOpenNewSK = () => {
+    const nextUrut = getNextNomorUrut();
+    const curMonthRoman = getRomanMonth(new Date().getMonth());
+    const curYear = new Date().getFullYear();
+    setNewSKForm({
+      ...newSKForm,
+      noSK: `400.3.12.2/${String(nextUrut).padStart(3, '0')}/SMP-02/PRL/${curMonthRoman}/${curYear}`,
+      semester: 'Ganjil',
+      tahunAjaran: '2026/2027',
+      tanggalSK: `${curYear}-07-13`,
+      tempatPenetapan: 'Unggulino',
+      tentang: '',
+    });
+    setIsNewSKModalOpen(true);
+  };
+
+  // Reactive effect to keep new SK KBM form sequence up to date
+  useEffect(() => {
+    const nextUrut = getNextNomorUrut();
+    const curMonthRoman = getRomanMonth(new Date().getMonth());
+    const curYear = new Date().getFullYear();
+    setNewSKForm(prev => ({
+      ...prev,
+      noSK: `400.3.12.2/${String(nextUrut).padStart(3, '0')}/SMP-02/PRL/${curMonthRoman}/${curYear}`
+    }));
+  }, [skList, suratKeluarList, suratTugasList, pembuatSuratList, skTugasTambahanList]);
 
   const handleOpenEditHeader = () => {
     if (!selectedSK) return;
@@ -596,7 +652,7 @@ export const SKKBMModule: React.FC<SKKBMModuleProps> = ({
           </button>
 
           <button
-            onClick={() => setIsNewSKModalOpen(true)}
+            onClick={handleOpenNewSK}
             className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold py-2.5 px-3.5 rounded-xl shadow-sm transition flex items-center gap-1.5"
           >
             <Plus className="w-4 h-4" />

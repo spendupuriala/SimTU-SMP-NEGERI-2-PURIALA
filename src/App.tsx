@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import { X, RefreshCw, CloudDownload } from 'lucide-react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './components/Dashboard';
@@ -56,6 +58,7 @@ import {
   syncLiveDatabaseToTataUsahaFolder,
   GoogleDriveQuota,
 } from './services/googleDrive';
+import { notifyGlobalSync, subscribeToGlobalSync } from './services/globalSync';
 
 export default function App() {
   const [data, setData] = useState<DatabaseState>(getStoredData());
@@ -77,6 +80,12 @@ export default function App() {
   // Auto-sync status to Google Drive Folder "TATA USAHA"
   const [autoSyncStatus, setAutoSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
   const [lastSyncedTime, setLastSyncedTime] = useState<string | null>(null);
+  const [realtimeNotification, setRealtimeNotification] = useState<{
+    moduleName: string;
+    updatedBy: string;
+    actionType: 'CREATE' | 'UPDATE' | 'DRIVE_SYNC';
+    timestamp: string;
+  } | null>(null);
   const isFirstSyncRef = React.useRef(true);
 
   // Show Toast helper
@@ -87,10 +96,14 @@ export default function App() {
     }, duration);
   };
 
-  // Synchronize state changes to localStorage
-  const updateData = (newData: DatabaseState) => {
+  // Synchronize state changes to localStorage and Firestore real-time status
+  const updateData = (newData: DatabaseState, moduleName?: string, actionType: 'CREATE' | 'UPDATE' | 'DRIVE_SYNC' = 'UPDATE') => {
     setData(newData);
     saveStoredData(newData);
+    if (moduleName) {
+      const email = googleUser?.email || googleUser?.displayName || 'spendupuriala@gmail.com';
+      notifyGlobalSync(moduleName, email, actionType);
+    }
   };
 
   // Refresh Google Drive Quota info
@@ -133,6 +146,30 @@ export default function App() {
       if (typeof unsubscribe === 'function') unsubscribe();
     };
   }, [refreshQuota]);
+
+  // Real-time listener for database modifications in other active sessions
+  useEffect(() => {
+    const unsubscribe = subscribeToGlobalSync((newData) => {
+      // Validate that this update is fresh (less than 15 seconds old)
+      // to avoid showing historic/stale notifications on app startup
+      const isFresh = newData.updatedAt 
+        ? (Date.now() - newData.updatedAt.toMillis() < 15000)
+        : true;
+
+      const currentUserEmail = googleUser?.email || googleUser?.displayName || 'spendupuriala@gmail.com';
+      
+      if (isFresh && newData.updatedBy !== currentUserEmail) {
+        setRealtimeNotification({
+          moduleName: newData.moduleName,
+          updatedBy: newData.updatedBy,
+          actionType: newData.actionType,
+          timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+        });
+      }
+    });
+
+    return () => unsubscribe();
+  }, [googleUser]);
 
   // REAL-TIME AUTO-SYNC: Sync every state update directly to Google Drive Folder "TATA USAHA"
   useEffect(() => {
@@ -305,6 +342,9 @@ export default function App() {
           'success',
           4000
         );
+        // Push notification of the Google Drive Sync action to global_sync
+        const email = googleUser?.email || googleUser?.displayName || 'spendupuriala@gmail.com';
+        notifyGlobalSync('Google Drive Sync', email, 'DRIVE_SYNC');
       } else {
         // Local state sync simulation when not logged in
         setTimeout(() => {
@@ -329,7 +369,7 @@ export default function App() {
       ...data,
       suratMasuk: [...data.suratMasuk, surat],
     };
-    updateData(updated);
+    updateData(updated, 'Surat Masuk', 'CREATE');
   };
 
   const handleBatchSuratMasuk = (newList: SuratMasuk[], mode: 'replace' | 'merge') => {
@@ -346,7 +386,7 @@ export default function App() {
       ...data,
       suratMasuk: updatedList,
     };
-    updateData(updated);
+    updateData(updated, 'Surat Masuk', 'DRIVE_SYNC');
   };
 
   const handleUpdateSuratMasuk = (surat: SuratMasuk) => {
@@ -354,7 +394,7 @@ export default function App() {
       ...data,
       suratMasuk: data.suratMasuk.map((s) => (s.id === surat.id ? surat : s)),
     };
-    updateData(updated);
+    updateData(updated, 'Surat Masuk', 'UPDATE');
   };
 
   const handleDeleteSuratMasuk = (id: string) => {
@@ -362,7 +402,7 @@ export default function App() {
       ...data,
       suratMasuk: data.suratMasuk.filter((s) => s.id !== id),
     };
-    updateData(updated);
+    updateData(updated, 'Surat Masuk', 'UPDATE');
   };
 
   // Surat Keluar CRUD
@@ -371,7 +411,7 @@ export default function App() {
       ...data,
       suratKeluar: [...data.suratKeluar, surat],
     };
-    updateData(updated);
+    updateData(updated, 'Surat Keluar', 'CREATE');
   };
 
   const handleBatchSuratKeluar = (newList: SuratKeluar[], mode: 'replace' | 'merge') => {
@@ -388,7 +428,7 @@ export default function App() {
       ...data,
       suratKeluar: updatedList,
     };
-    updateData(updated);
+    updateData(updated, 'Surat Keluar', 'DRIVE_SYNC');
   };
 
   const handleUpdateSuratKeluar = (surat: SuratKeluar) => {
@@ -396,7 +436,7 @@ export default function App() {
       ...data,
       suratKeluar: data.suratKeluar.map((s) => (s.id === surat.id ? surat : s)),
     };
-    updateData(updated);
+    updateData(updated, 'Surat Keluar', 'UPDATE');
   };
 
   const handleDeleteSuratKeluar = (id: string) => {
@@ -404,7 +444,7 @@ export default function App() {
       ...data,
       suratKeluar: data.suratKeluar.filter((s) => s.id !== id),
     };
-    updateData(updated);
+    updateData(updated, 'Surat Keluar', 'UPDATE');
   };
 
   // SK KBM CRUD
@@ -413,7 +453,7 @@ export default function App() {
       ...data,
       skKBM: [sk, ...data.skKBM],
     };
-    updateData(updated);
+    updateData(updated, 'SK KBM & Beban Jam', 'CREATE');
   };
 
   const handleUpdateSKKBM = (sk: SKKBM) => {
@@ -421,7 +461,7 @@ export default function App() {
       ...data,
       skKBM: data.skKBM.map((item) => (item.id === sk.id ? sk : item)),
     };
-    updateData(updated);
+    updateData(updated, 'SK KBM & Beban Jam', 'UPDATE');
   };
 
   const handleDeleteSKKBM = (id: string) => {
@@ -429,7 +469,7 @@ export default function App() {
       ...data,
       skKBM: data.skKBM.filter((item) => item.id !== id),
     };
-    updateData(updated);
+    updateData(updated, 'SK KBM & Beban Jam', 'UPDATE');
   };
 
   // SK Tugas Tambahan CRUD
@@ -438,7 +478,7 @@ export default function App() {
       ...data,
       skTugasTambahan: [sk, ...data.skTugasTambahan],
     };
-    updateData(updated);
+    updateData(updated, 'SK Tugas Tambahan', 'CREATE');
   };
 
   const handleUpdateSKTT = (sk: SKTugasTambahan) => {
@@ -446,7 +486,7 @@ export default function App() {
       ...data,
       skTugasTambahan: data.skTugasTambahan.map((item) => (item.id === sk.id ? sk : item)),
     };
-    updateData(updated);
+    updateData(updated, 'SK Tugas Tambahan', 'UPDATE');
   };
 
   const handleDeleteSKTT = (id: string) => {
@@ -454,7 +494,7 @@ export default function App() {
       ...data,
       skTugasTambahan: data.skTugasTambahan.filter((item) => item.id !== id),
     };
-    updateData(updated);
+    updateData(updated, 'SK Tugas Tambahan', 'UPDATE');
   };
 
   const handleReorderSKTT = (newList: SKTugasTambahan[]) => {
@@ -473,7 +513,7 @@ export default function App() {
       suratTugas: [item, ...data.suratTugas],
       suratKeluar: updatedSuratKeluar,
     };
-    updateData(updated);
+    updateData(updated, 'Surat Tugas Dinas/SPT', 'CREATE');
     showToast(`Surat Tugas "${item.noSuratTugas}" tersinkronisasi ke Buku Agenda Surat Keluar`, 'success');
   };
 
@@ -484,7 +524,7 @@ export default function App() {
       suratTugas: data.suratTugas.map((t) => (t.id === item.id ? item : t)),
       suratKeluar: updatedSuratKeluar,
     };
-    updateData(updated);
+    updateData(updated, 'Surat Tugas Dinas/SPT', 'UPDATE');
     showToast(`Surat Tugas "${item.noSuratTugas}" berhasil diperbarui dan disinkronkan`, 'info');
   };
 
@@ -495,7 +535,7 @@ export default function App() {
       suratTugas: data.suratTugas.filter((t) => t.id !== id),
       suratKeluar: updatedSuratKeluar,
     };
-    updateData(updated);
+    updateData(updated, 'Surat Tugas Dinas/SPT', 'UPDATE');
     showToast('Surat Tugas berhasil dihapus dari arsip dan agenda keluar', 'info');
   };
 
@@ -507,7 +547,7 @@ export default function App() {
       pembuatSurat: [surat, ...(data.pembuatSurat || [])],
       suratKeluar: updatedSuratKeluar,
     };
-    updateData(updated);
+    updateData(updated, 'Pembuat Surat', 'CREATE');
     showToast(`Dokumen "${surat.noSurat}" tersinkronisasi ke Buku Agenda Surat Keluar`, 'success');
   };
 
@@ -518,7 +558,7 @@ export default function App() {
       pembuatSurat: (data.pembuatSurat || []).map((s) => (s.id === surat.id ? surat : s)),
       suratKeluar: updatedSuratKeluar,
     };
-    updateData(updated);
+    updateData(updated, 'Pembuat Surat', 'UPDATE');
     showToast(`Dokumen "${surat.noSurat}" berhasil diperbarui dan disinkronkan`, 'info');
   };
 
@@ -529,7 +569,7 @@ export default function App() {
       pembuatSurat: (data.pembuatSurat || []).filter((s) => s.id !== id),
       suratKeluar: updatedSuratKeluar,
     };
-    updateData(updated);
+    updateData(updated, 'Pembuat Surat', 'UPDATE');
     showToast('Dokumen berhasil dihapus dari pembuat surat dan agenda keluar', 'info');
   };
 
@@ -539,7 +579,7 @@ export default function App() {
       ...data,
       siswa: [siswa, ...data.siswa],
     };
-    updateData(updated);
+    updateData(updated, 'Buku Induk Siswa', 'CREATE');
   };
 
   const handleBatchSiswa = (newList: Siswa[], mode: 'replace' | 'merge' = 'replace') => {
@@ -555,7 +595,7 @@ export default function App() {
       ...data,
       siswa: updatedList,
     };
-    updateData(updated);
+    updateData(updated, 'Buku Induk Siswa', 'DRIVE_SYNC');
   };
 
   const handleUpdateSiswa = (siswa: Siswa) => {
@@ -563,7 +603,7 @@ export default function App() {
       ...data,
       siswa: data.siswa.map((s) => (s.id === siswa.id ? siswa : s)),
     };
-    updateData(updated);
+    updateData(updated, 'Buku Induk Siswa', 'UPDATE');
   };
 
   const handleDeleteSiswa = (id: string) => {
@@ -571,7 +611,7 @@ export default function App() {
       ...data,
       siswa: data.siswa.filter((s) => s.id !== id),
     };
-    updateData(updated);
+    updateData(updated, 'Buku Induk Siswa', 'UPDATE');
   };
 
   // Alumni CRUD
@@ -580,7 +620,7 @@ export default function App() {
       ...data,
       alumni: [alumni, ...data.alumni],
     };
-    updateData(updated);
+    updateData(updated, 'Buku Induk Siswa', 'CREATE');
   };
 
   const handleUpdateAlumni = (alumni: AlumniIjazah) => {
@@ -588,7 +628,7 @@ export default function App() {
       ...data,
       alumni: data.alumni.map((a) => (a.id === alumni.id ? alumni : a)),
     };
-    updateData(updated);
+    updateData(updated, 'Buku Induk Siswa', 'UPDATE');
   };
 
   const handleDeleteAlumni = (id: string) => {
@@ -596,7 +636,7 @@ export default function App() {
       ...data,
       alumni: data.alumni.filter((a) => a.id !== id),
     };
-    updateData(updated);
+    updateData(updated, 'Buku Induk Siswa', 'UPDATE');
   };
 
   // PTK CRUD
@@ -605,7 +645,7 @@ export default function App() {
       ...data,
       guruPTK: [guru, ...data.guruPTK],
     };
-    updateData(updated);
+    updateData(updated, 'Data Guru & PTK', 'CREATE');
   };
 
   const handleUpdateGuru = (guru: GuruPTK) => {
@@ -613,7 +653,7 @@ export default function App() {
       ...data,
       guruPTK: data.guruPTK.map((g) => (g.id === guru.id ? guru : g)),
     };
-    updateData(updated);
+    updateData(updated, 'Data Guru & PTK', 'UPDATE');
   };
 
   const handleDeleteGuru = (id: string) => {
@@ -621,7 +661,7 @@ export default function App() {
       ...data,
       guruPTK: data.guruPTK.filter((g) => g.id !== id),
     };
-    updateData(updated);
+    updateData(updated, 'Data Guru & PTK', 'UPDATE');
   };
 
   const handleReorderGuru = (newList: GuruPTK[]) => {
@@ -759,6 +799,61 @@ export default function App() {
           lastSyncedTime={lastSyncedTime}
         />
 
+        {/* Real-time Global Synchronization Notification Banner */}
+        <AnimatePresence>
+          {realtimeNotification && (
+            <motion.div
+              initial={{ height: 0, opacity: 0, y: -10 }}
+              animate={{ height: 'auto', opacity: 1, y: 0 }}
+              exit={{ height: 0, opacity: 0, y: -10 }}
+              transition={{ duration: 0.3, ease: 'easeInOut' }}
+              className="bg-emerald-50 border-b border-emerald-200 px-4 md:px-6 py-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 overflow-hidden shadow-sm shrink-0"
+            >
+              <div className="flex items-start md:items-center gap-3">
+                <div className="p-2 bg-emerald-100 rounded-lg text-emerald-800 shrink-0">
+                  <RefreshCw className="w-4 h-4 animate-spin text-emerald-700" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-slate-800 leading-snug">
+                    Pembaruan Real-time Terdeteksi
+                  </p>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Admin <strong className="text-slate-800 font-semibold">{realtimeNotification.updatedBy}</strong> baru saja mengubah modul <strong className="text-slate-800 font-semibold">{realtimeNotification.moduleName}</strong> pada pukul {realtimeNotification.timestamp}.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                <button
+                  onClick={() => {
+                    if (['Buku Induk Siswa', 'Data Guru & PTK', 'Surat Masuk', 'Surat Keluar'].includes(realtimeNotification.moduleName)) {
+                      window.dispatchEvent(new CustomEvent('simtu-pull-data', { detail: { moduleName: realtimeNotification.moduleName } }));
+                      showToast(`Menarik data terbaru untuk modul ${realtimeNotification.moduleName}...`, 'info');
+                    } else {
+                      handleSync();
+                    }
+                    setRealtimeNotification(null);
+                  }}
+                  className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1.5 shadow-sm transition"
+                >
+                  <CloudDownload className="w-3.5 h-3.5" />
+                  <span>
+                    {['Buku Induk Siswa', 'Data Guru & PTK', 'Surat Masuk', 'Surat Keluar'].includes(realtimeNotification.moduleName)
+                      ? 'Tarik Data Modul Ini'
+                      : 'Sinkronisasi Penuh'}
+                  </span>
+                </button>
+                <button
+                  onClick={() => setRealtimeNotification(null)}
+                  className="p-1.5 hover:bg-slate-200/60 rounded-lg text-slate-400 hover:text-slate-600 transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Dynamic Module Container */}
         <main className="flex-1 overflow-y-auto p-4 md:p-6 light-scrollbar">
           <div className="max-w-7xl mx-auto">
@@ -817,6 +912,10 @@ export default function App() {
             {activeTab === 'sk-kbm' && (
               <SKKBMModule
                 skList={data.skKBM}
+                suratKeluarList={data.suratKeluar || []}
+                suratTugasList={data.suratTugas || []}
+                pembuatSuratList={data.pembuatSurat || []}
+                skTugasTambahanList={data.skTugasTambahan || []}
                 onAdd={handleAddSKKBM}
                 onUpdate={handleUpdateSKKBM}
                 onDelete={handleDeleteSKKBM}
@@ -832,6 +931,10 @@ export default function App() {
             {activeTab === 'sk-tugas-tambahan' && (
               <SKTugasTambahanModule
                 skList={data.skTugasTambahan}
+                suratKeluarList={data.suratKeluar || []}
+                suratTugasList={data.suratTugas || []}
+                pembuatSuratList={data.pembuatSurat || []}
+                skKBMList={data.skKBM || []}
                 onAdd={handleAddSKTT}
                 onUpdate={handleUpdateSKTT}
                 onDelete={handleDeleteSKTT}
@@ -848,6 +951,10 @@ export default function App() {
             {activeTab === 'surat-tugas' && (
               <SuratTugasDinasModule
                 tugasList={data.suratTugas}
+                suratKeluarList={data.suratKeluar || []}
+                pembuatSuratList={data.pembuatSurat || []}
+                skKBMList={data.skKBM || []}
+                skTugasTambahanList={data.skTugasTambahan || []}
                 onAdd={handleAddSuratTugas}
                 onUpdate={handleUpdateSuratTugas}
                 onDelete={handleDeleteSuratTugas}
@@ -866,6 +973,8 @@ export default function App() {
                 suratList={data.pembuatSurat || []}
                 suratKeluarList={data.suratKeluar || []}
                 suratTugasList={data.suratTugas || []}
+                skKBMList={data.skKBM || []}
+                skTugasTambahanList={data.skTugasTambahan || []}
                 onAdd={handleAddPembuatSurat}
                 onUpdate={handleUpdatePembuatSurat}
                 onDelete={handleDeletePembuatSurat}

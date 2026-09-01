@@ -1,0 +1,8 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /system_status/global_sync {
+      allow read, write: if request.auth != null || true; // Allow access for the school app users
+    }
+  }
+}

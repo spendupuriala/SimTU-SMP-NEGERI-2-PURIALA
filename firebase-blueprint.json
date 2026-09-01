@@ -1,0 +1,28 @@
+{
+  "collections": {
+    "system_status": {
+      "documents": {
+        "global_sync": {
+          "fields": {
+            "moduleName": {
+              "type": "string",
+              "description": "Name of the modified module (e.g., Buku Induk Siswa, Data Guru, Surat Tugas, dll.)"
+            },
+            "updatedBy": {
+              "type": "string",
+              "description": "Name or email of the user who triggered the update"
+            },
+            "updatedAt": {
+              "type": "timestamp",
+              "description": "Timestamp of the last update"
+            },
+            "actionType": {
+              "type": "string",
+              "description": "Type of action: 'CREATE', 'UPDATE', or 'DRIVE_SYNC'"
+            }
+          }
+        }
+      }
+    }
+  }
+}

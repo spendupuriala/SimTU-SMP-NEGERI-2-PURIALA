@@ -28,7 +28,15 @@ import {
   ChevronUp,
   ChevronDown,
 } from 'lucide-react';
-import { SKTugasTambahan, IdentitasSekolah, PTK } from '../types';
+import {
+  SKTugasTambahan,
+  IdentitasSekolah,
+  PTK,
+  SuratKeluar,
+  SuratTugasDinas,
+  PembuatSuratRecord,
+  SKKBM,
+} from '../types';
 import {
   fetchSKFolderFiles,
   uploadSKTugasTertentuToDrive,
@@ -51,9 +59,14 @@ import {
   autoGenerateSKTugasTambahanFromPTK,
   getJenjangJabatanRank,
 } from '../utils/skTemplates';
+import { getHighestNomorUrutFromLists, getRomanMonth } from '../utils/suratTemplates';
 
 interface SKTugasTambahanModuleProps {
   skList: SKTugasTambahan[];
+  suratKeluarList?: SuratKeluar[];
+  suratTugasList?: SuratTugasDinas[];
+  pembuatSuratList?: PembuatSuratRecord[];
+  skKBMList?: SKKBM[];
   onAdd: (sk: SKTugasTambahan) => void;
   onUpdate: (sk: SKTugasTambahan) => void;
   onDelete: (id: string) => void;
@@ -68,6 +81,10 @@ interface SKTugasTambahanModuleProps {
 
 export const SKTugasTambahanModule: React.FC<SKTugasTambahanModuleProps> = ({
   skList,
+  suratKeluarList = [],
+  suratTugasList = [],
+  pembuatSuratList = [],
+  skKBMList = [],
   onAdd,
   onUpdate,
   onDelete,
@@ -83,6 +100,17 @@ export const SKTugasTambahanModule: React.FC<SKTugasTambahanModuleProps> = ({
   const [selectedTahun, setSelectedTahun] = useState<string>('2026/2027');
   const [selectedSemester, setSelectedSemester] = useState<'Ganjil' | 'Genap'>('Ganjil');
 
+  const getNextNomorUrut = (): number => {
+    const highest = getHighestNomorUrutFromLists(
+      skList,
+      suratKeluarList,
+      suratTugasList,
+      pembuatSuratList,
+      skKBMList
+    );
+    return highest > 0 ? highest + 1 : (skList.length + 1);
+  };
+
   // Document metadata header
   const [skHeader, setSkHeader] = useState<SKTugasTertentuHeader>({
     noSK: '400.3.12.2/054/SMP-02/PRL/VII/2026',
@@ -96,6 +124,19 @@ export const SKTugasTambahanModule: React.FC<SKTugasTambahanModuleProps> = ({
     memperhatikan: DEFAULT_MEMPERHATIKAN_SK_LIST('2026/2027', '2026-07-13'),
     templateNama: 'SK Tugas Tertentu T.P 2026-2027',
   });
+
+  // Reactive effect to keep default letter number sequence up to date
+  useEffect(() => {
+    const nextUrut = getNextNomorUrut();
+    const curMonthRoman = getRomanMonth(new Date().getMonth());
+    const curYear = new Date().getFullYear();
+    const dynamicNoSK = `400.3.12.2/${String(nextUrut).padStart(3, '0')}/SMP-02/PRL/${curMonthRoman}/${curYear}`;
+    
+    setSkHeader(prev => ({
+      ...prev,
+      noSK: dynamicNoSK
+    }));
+  }, [skList, suratKeluarList, suratTugasList, pembuatSuratList, skKBMList]);
 
   // Modals
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
