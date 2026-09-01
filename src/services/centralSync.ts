@@ -807,8 +807,7 @@ export const runCentralSync = async (
       guruPTK: workingState.guruPTK || [],
       daftarPTK: workingState.guruPTK || [],
     };
-    await uploadOrUpdateJsonFile(accessToken, 'Data Guru & PTK.json', ptkPayload, targetFolderPTK);
-    await uploadOrUpdateJsonFile(accessToken, 'DATA_INDUK_PTK.json', ptkPayload, targetFolderPTK);
+    // PTK sync to Sheets handled elsewhere
 
     const siswaPayload = {
       judul: 'BUKU INDUK PESERTA DIDIK & ALUMNI SMPN 2 PURIALA',

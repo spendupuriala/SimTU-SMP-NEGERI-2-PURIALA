@@ -50,11 +50,12 @@ import {
   terbilangHari,
 } from '../utils/skTemplates';
 import { getHighestNomorUrutFromLists, getRomanMonth } from '../utils/suratTemplates';
+import html2pdf from 'html2pdf.js';
 import {
   findSuratTugasTemplateInDrive,
   findSPPDTemplateInDrive,
   fetchSuratFolderFiles,
-  uploadSuratTugasDocumentToDrive,
+  uploadDocumentAsPdfToDrive,
   GoogleDriveFile,
 } from '../services/googleDrive';
 
@@ -265,7 +266,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
     setIsAddModalOpen(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.maksudTugas || !formData.tempatTujuan) {
       alert('Mohon lengkapi Maksud Tugas dan Tempat Tujuan penugasan dinas!');
@@ -275,13 +276,18 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
     const selectedKode = formData.kodeKlasifikasi || formData.noSuratTugas?.split('/')[0] || '090';
 
     if (editingItem) {
-      onUpdate({
+      const updatedItem: SuratTugasDinas = {
         ...editingItem,
         ...formData,
         kodeKlasifikasi: selectedKode,
         templateNama: 'Format Google Drive TATA USAHA/SURAT - Surat Tugas',
         drivePath: 'TATA USAHA/SURAT',
-      } as SuratTugasDinas);
+      } as SuratTugasDinas;
+      onUpdate(updatedItem);
+      setIsAddModalOpen(false);
+      
+      // Auto-sync to Google Drive
+      await handleSaveToDrive(updatedItem);
     } else {
       const { sptNum, sppdNum } = getSptAndSppdNumbers();
       const curMonthRoman = getRomanMonth(new Date().getMonth());
@@ -318,8 +324,11 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
         statusDrive: 'Lokal Saja',
       };
       onAdd(newItem);
+      setIsAddModalOpen(false);
+      
+      // Auto-sync to Google Drive
+      await handleSaveToDrive(newItem);
     }
-    setIsAddModalOpen(false);
   };
 
   const handleAddPersonil = () => {
@@ -373,7 +382,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
     setFormData({ ...formData, personil: current });
   };
 
-  // Upload SPT document directly into Google Drive folder TATA USAHA/SURAT
+  // Upload SPT document directly into Google Drive folder TATA USAHA/07_ARSIP_DOKUMEN_SURAT
   const handleSaveToDrive = async (tugas: SuratTugasDinas) => {
     if (!googleToken) {
       if (onConnectGoogle) onConnectGoogle();
@@ -385,23 +394,25 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
     try {
       const htmlContent = generateSuratTugasFullHtml(tugas, identitasSekolah, printMode);
       const safeNo = (tugas.noSuratTugas || 'Surat_Tugas').replace(/[/\\?%*:|"<>]/g, '_');
-      const fileName = `SPT_${safeNo}_${tugas.personil[0]?.nama.replace(/[^a-zA-Z0-9]/g, '_') || 'Dinas'}.html`;
-      const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+      const fileName = `SPT_${safeNo}_${tugas.personil[0]?.nama.replace(/[^a-zA-Z0-9]/g, '_') || 'Dinas'}.pdf`;
 
-      const uploaded = await uploadSuratTugasDocumentToDrive(googleToken, blob, fileName, 'text/html');
+      // Convert HTML to PDF blob
+      const pdfBlob = await html2pdf().from(htmlContent).outputPdf('blob');
+
+      const uploaded = await uploadDocumentAsPdfToDrive(googleToken, pdfBlob, fileName);
 
       const updatedTugas: SuratTugasDinas = {
         ...tugas,
         statusDrive: 'Tersimpan',
         driveFileId: uploaded.id,
         driveWebViewLink: uploaded.webViewLink,
-        drivePath: 'TATA USAHA/SURAT',
-        templateNama: 'Format Google Drive TATA USAHA/SURAT - Surat Tugas',
+        drivePath: 'TATA USAHA/07_ARSIP_DOKUMEN_SURAT',
+        templateNama: 'Format Google Drive TATA USAHA/07_ARSIP_DOKUMEN_SURAT - Surat Tugas',
       };
 
       onUpdate(updatedTugas);
       setSelectedForPrint(updatedTugas);
-      setSaveSuccessMsg(`Berhasil disimpan ke Google Drive: TATA USAHA/SURAT/${fileName}`);
+      setSaveSuccessMsg(`Berhasil disimpan ke Google Drive: TATA USAHA/07_ARSIP_DOKUMEN_SURAT/${fileName}`);
       loadDriveTemplates();
     } catch (err: any) {
       alert(`Gagal menyimpan ke Google Drive: ${err?.message || 'Terjadi kesalahan'}`);

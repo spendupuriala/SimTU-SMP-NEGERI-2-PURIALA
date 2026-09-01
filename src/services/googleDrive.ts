@@ -1,6 +1,6 @@
 import { DatabaseState, GuruPTK, Siswa } from '../types';
 import { invalidateGoogleAuth, verifyGoogleAccessToken } from './googleAuth';
-import { writeGuruPTKToSheet, parseGuruPTKFromRows, writeSiswaToSheet, parseSiswaFromRows } from './googleSheets';
+import { writeGuruPTKToSheet, parseGuruPTKFromRows, writeSiswaToSheet, parseSiswaFromRows, findOrCreateGuruPTKAgendaSheet } from './googleSheets';
 
 export interface GoogleDriveFile {
   id: string;
@@ -822,6 +822,60 @@ export const uploadSuratMasukFileToDrive = async (
 };
 
 /**
+ * Find or Create folder path: TATA USAHA -> 07_ARSIP_DOKUMEN_SURAT
+ */
+export const findOrCreateArsipDokumenSuratFolder = async (accessToken: string): Promise<string> => {
+  if (!accessToken) {
+    throw new Error('AUTH_EXPIRED: Token Google Drive kosong.');
+  }
+
+  try {
+    const tataUsahaFolderId = await findOrCreateTataUsahaFolder(accessToken, 'TATA USAHA');
+
+    let folderId: string | null = null;
+    const query = `(name = '07_ARSIP_DOKUMEN_SURAT' or name = 'ARSIP_DOKUMEN_SURAT') and '${tataUsahaFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const res = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: query, fields: 'files(id, name)' }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (res.status === 401) {
+      invalidateGoogleAuth();
+      throw new Error('AUTH_EXPIRED');
+    }
+    if (res.ok) {
+      const data = await res.json();
+      if (data.files && data.files.length > 0) {
+        folderId = data.files[0].id;
+      }
+    }
+    if (!folderId) {
+      folderId = await createGoogleDriveFolder(accessToken, '07_ARSIP_DOKUMEN_SURAT', tataUsahaFolderId);
+    }
+
+    return folderId;
+  } catch (error: any) {
+    if (error?.message?.includes('AUTH_EXPIRED') || error?.message?.includes('invalid authentication credentials')) {
+      invalidateGoogleAuth();
+      throw error;
+    }
+    console.warn('Warning creating TATA USAHA/07_ARSIP_DOKUMEN_SURAT folder:', error?.message || error);
+    return findOrCreateTataUsahaFolder(accessToken);
+  }
+};
+
+/**
+ * Upload a generated document as PDF directly to Google Drive folder TATA USAHA/07_ARSIP_DOKUMEN_SURAT
+ */
+export const uploadDocumentAsPdfToDrive = async (
+  accessToken: string,
+  fileBlob: Blob,
+  fileName: string
+): Promise<GoogleDriveFile> => {
+  const targetFolderId = await findOrCreateArsipDokumenSuratFolder(accessToken);
+  return uploadFileToGoogleDrive(accessToken, fileBlob, fileName, 'application/pdf', targetFolderId);
+};
+
+/**
  * Find or Create the dedicated "TATA USAHA" folder in user's Google Drive root
  */
 export const findOrCreateTataUsahaFolder = async (
@@ -1525,81 +1579,20 @@ export const saveGuruPTKDataToDrive = async (
     throw new Error('AUTH_EXPIRED: Token Google Drive kosong.');
   }
 
-  const ptkFolderId = await findOrCreatePTKFolder(accessToken);
   const nowFormatted = new Date().toISOString();
 
-  // 1. Check if a Google Spreadsheet named "Data Guru & PTK" or "DATA PTK" exists in the folder
-  const checkSheetQuery = `mimeType = 'application/vnd.google-apps.spreadsheet' and (name = 'Data Guru & PTK' or name = 'DATA PTK' or name = 'DATA GURU') and '${ptkFolderId}' in parents and trashed = false`;
-  try {
-    const sheetSearchRes = await fetch(`${DRIVE_API_URL}/files?${new URLSearchParams({ q: checkSheetQuery, fields: 'files(id, name)' }).toString()}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (sheetSearchRes.ok) {
-      const sheetData = await sheetSearchRes.json();
-      if (sheetData.files && sheetData.files.length > 0) {
-        const sheetId = sheetData.files[0].id;
-        // Non-destructive write: preserves template header styles, fonts, and borders
-        await writeGuruPTKToSheet(accessToken, sheetId, guruList, 'DATA PTK');
-      }
-    }
-  } catch (sheetErr) {
-    console.warn('Could not sync to Google Spreadsheet (non-fatal, continuing to JSON):', sheetErr);
-  }
-
-  // 2. Also save/update the exact JSON file in TATA USAHA/04_KEPEGAWAIAN_PTK
-  const fileName = 'Data Guru & PTK.json';
-  const payload = {
-    _title: 'DATA GURU & TENAGA KEPENDIDIKAN (PTK)',
-    _folder: 'TATA USAHA/04_KEPEGAWAIAN_PTK',
-    _fileName: 'Data Guru & PTK',
-    _lastSync: nowFormatted,
-    _totalPTK: guruList.length,
-    _school: 'SMP NEGERI 2 PURIALA',
-    guruPTK: guruList,
-  };
-
-  const jsonString = JSON.stringify(payload, null, 2);
-  const blob = new Blob([jsonString], { type: 'application/json' });
-
-  // Check if file exists in 04_KEPEGAWAIAN_PTK folder
-  const checkQuery = `(name = '${fileName}' or name = 'Data Guru & PTK' or name = 'DATA_INDUK_PTK.json') and '${ptkFolderId}' in parents and trashed = false`;
-  const checkParams = new URLSearchParams({ q: checkQuery, fields: 'files(id, name)' });
-
-  const searchRes = await fetch(`${DRIVE_API_URL}/files?${checkParams.toString()}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-
-  if (searchRes.status === 401) {
-    invalidateGoogleAuth();
-    throw new Error('AUTH_EXPIRED: Token Google Drive kedaluwarsa.');
-  }
-
-  let existingFileId: string | null = null;
-  if (searchRes.ok) {
-    const searchData = await searchRes.json();
-    if (searchData.files && searchData.files.length > 0) {
-      existingFileId = searchData.files[0].id;
-    }
-  }
-
-  let finalFileId = existingFileId;
-  if (existingFileId) {
-    const updated = await updateFileInGoogleDrive(accessToken, existingFileId, blob, 'application/json');
-    if (!updated) {
-      const up = await uploadFileToGoogleDrive(accessToken, blob, fileName, 'application/json', ptkFolderId);
-      finalFileId = up.id;
-    }
-  } else {
-    const up = await uploadFileToGoogleDrive(accessToken, blob, fileName, 'application/json', ptkFolderId);
-    finalFileId = up.id;
-  }
-
-  return {
-    success: true,
-    fileId: finalFileId || '',
-    fileName: 'Data Guru & PTK',
-    folderId: ptkFolderId,
-    lastUpdated: nowFormatted,
+  // Find or create the agenda spreadsheet
+  const { spreadsheetId, folderId } = await findOrCreateGuruPTKAgendaSheet(accessToken, guruList);
+  
+  // Write the data to the sheet
+  await writeGuruPTKToSheet(accessToken, spreadsheetId, guruList, "DATA PTK");
+  
+  return { 
+    success: true, 
+    fileId: spreadsheetId, 
+    fileName: "DATA_GURU_PTK", 
+    folderId, 
+    lastUpdated: nowFormatted 
   };
 };
 
@@ -1617,7 +1610,7 @@ export const loadGuruPTKDataFromDrive = async (
   const ptkFolderId = await findOrCreatePTKFolder(accessToken);
 
   // 1. Search inside 04_KEPEGAWAIAN_PTK folder first
-  const queryInFolder = `'${ptkFolderId}' in parents and trashed = false and (name contains 'Data Guru & PTK' or name contains 'DATA GURU' or name contains 'PTK' or name contains 'DATA_INDUK_PTK')`;
+  const queryInFolder = `'${ptkFolderId}' in parents and trashed = false and mimeType = 'application/vnd.google-apps.spreadsheet' and name = 'DATA_GURU_PTK'`;
   const resInFolder = await fetch(
     `${DRIVE_API_URL}/files?${new URLSearchParams({
       q: queryInFolder,
@@ -1640,7 +1633,7 @@ export const loadGuruPTKDataFromDrive = async (
 
   // 2. If nothing found in folder, search globally in Drive
   if (candidateFiles.length === 0) {
-    const queryGlobal = `trashed = false and (name = 'Data Guru & PTK' or name = 'Data Guru & PTK.json' or name contains 'Data Guru & PTK')`;
+    const queryGlobal = `trashed = false and mimeType = 'application/vnd.google-apps.spreadsheet' and name = 'DATA_GURU_PTK'`;
     const resGlobal = await fetch(
       `${DRIVE_API_URL}/files?${new URLSearchParams({
         q: queryGlobal,
@@ -1655,37 +1648,14 @@ export const loadGuruPTKDataFromDrive = async (
     }
   }
 
-  // Prioritize exact match "Data Guru & PTK" or "Data Guru & PTK.json"
+  // Prioritize exact match "DATA_GURU_PTK"
   candidateFiles.sort((a, b) => {
-    const aExact = a.name === 'Data Guru & PTK' || a.name === 'Data Guru & PTK.json' ? 1 : 0;
-    const bExact = b.name === 'Data Guru & PTK' || b.name === 'Data Guru & PTK.json' ? 1 : 0;
+    const aExact = a.name === 'DATA_GURU_PTK' ? 1 : 0;
+    const bExact = b.name === 'DATA_GURU_PTK' ? 1 : 0;
     return bExact - aExact;
   });
 
   for (const file of candidateFiles) {
-    // A. If it's a JSON file
-    if (file.mimeType === 'application/json' || file.name.endsWith('.json')) {
-      try {
-        const fileContentRes = await fetch(`${DRIVE_API_URL}/files/${file.id}?alt=media`, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
-        if (fileContentRes.ok) {
-          const parsed = await fileContentRes.json();
-          const list: GuruPTK[] = parsed.guruPTK || parsed.data || (Array.isArray(parsed) ? parsed : []);
-          if (Array.isArray(list) && list.length > 0) {
-            return {
-              success: true,
-              data: list,
-              sourceName: file.name,
-              sourceFolder: 'TATA USAHA/04_KEPEGAWAIAN_PTK',
-            };
-          }
-        }
-      } catch (e) {
-        console.warn(`Error reading json file ${file.name}:`, e);
-      }
-    }
-
     // B. If it's a Google Spreadsheet
     if (file.mimeType === 'application/vnd.google-apps.spreadsheet') {
       try {

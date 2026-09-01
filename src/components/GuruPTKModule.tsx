@@ -313,7 +313,7 @@ export const GuruPTKModule: React.FC<GuruPTKModuleProps> = ({
         const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
         setLastSyncTime(timeStr);
         showNotification(
-          `Berhasil menarik ${res.data.length} data Guru & PTK dari Google Drive (${res.sourceFolder} / ${res.sourceName})!`,
+          `Berhasil menarik data Guru & PTK dari Google Sheets!`,
           'success'
         );
       } else {

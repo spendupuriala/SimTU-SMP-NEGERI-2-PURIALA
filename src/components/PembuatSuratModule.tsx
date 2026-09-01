@@ -55,7 +55,8 @@ import {
   downloadSuratAsHTML,
   printSuratDocument,
 } from '../utils/suratTemplates';
-import { uploadPembuatSuratDocumentToDrive } from '../services/googleDrive';
+import html2pdf from 'html2pdf.js';
+import { uploadDocumentAsPdfToDrive } from '../services/googleDrive';
 
 interface PembuatSuratModuleProps {
   suratList?: PembuatSuratRecord[];
@@ -694,7 +695,7 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
     showToast('Draft surat berhasil disimpan.');
   };
 
-  const handlePublishAndPrint = () => {
+  const handlePublishAndPrint = async () => {
     const record = constructRecordFromForm('Terbit');
     if (editingSuratId) {
       onUpdate(record);
@@ -702,6 +703,10 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
       onAdd(record);
     }
     setIsFormModalOpen(false);
+    
+    // Auto-sync to Google Drive
+    await handleSyncToGoogleDrive(record);
+    
     printSuratDocument(record, identitasSekolah);
     showToast('Surat resmi berhasil diterbitkan & siap dicetak (PDF).');
   };
@@ -730,12 +735,14 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
     try {
       setIsUploadingToDrive(true);
       const htmlContent = renderSuratDocumentHTML(surat, identitasSekolah);
-      const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
       const cleanName = (surat.subjekData.nama || 'Subjek').replace(/[^a-zA-Z0-9_-]/g, '_');
       const cleanJenis = (surat.jenisSuratNama || 'Surat').replace(/[^a-zA-Z0-9_-]/g, '_');
-      const fileName = `${cleanJenis}_${cleanName}_SMPN2_PURIALA.html`;
+      const fileName = `${cleanJenis}_${cleanName}_SMPN2_PURIALA.pdf`;
 
-      const uploaded = await uploadPembuatSuratDocumentToDrive(googleToken, blob, fileName, 'text/html');
+      // Convert HTML to PDF blob
+      const pdfBlob = await html2pdf().from(htmlContent).outputPdf('blob');
+
+      const uploaded = await uploadDocumentAsPdfToDrive(googleToken, pdfBlob, fileName);
 
       onUpdate({
         ...surat,
@@ -744,7 +751,7 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
         driveWebViewLink: uploaded.webViewLink,
       });
 
-      showToast(`Berhasil menyimpan berkas "${fileName}" ke Google Drive (TATA USAHA/SURAT).`);
+      showToast(`Berhasil menyimpan berkas "${fileName}" ke Google Drive (TATA USAHA/07_ARSIP_DOKUMEN_SURAT).`);
     } catch (err: any) {
       showToast(`Gagal mengunggah ke Google Drive: ${err.message || err}`);
     } finally {

@@ -79,30 +79,41 @@ const buildInitialDatabase = (): DatabaseState => {
   };
 };
 
-export const getStoredData = (key: string = STORAGE_KEY, fallback?: DatabaseState): DatabaseState => {
+export const saveStoredData = (data: DatabaseState, key: string = STORAGE_KEY): void => {
   try {
-    const raw = localStorage.getItem(key);
-    if (!raw) {
-      const initial = fallback || buildInitialDatabase();
-      localStorage.setItem(key, JSON.stringify(initial));
-      return initial;
-    }
-    const parsed = JSON.parse(raw);
-    if (!parsed.pembuatSurat) {
-      parsed.pembuatSurat = initialPembuatSurat;
-    }
-    return parsed as DatabaseState;
+    // Split the data into smaller chunks to avoid localStorage quota limits
+    const { identitasSekolah, suratMasuk, suratKeluar, ...rest } = data;
+    localStorage.setItem(`${key}_IDENTITAS`, JSON.stringify(identitasSekolah));
+    localStorage.setItem(`${key}_SURAT_MASUK`, JSON.stringify(suratMasuk));
+    localStorage.setItem(`${key}_SURAT_KELUAR`, JSON.stringify(suratKeluar));
+    localStorage.setItem(`${key}_REST`, JSON.stringify(rest));
   } catch (e) {
-    console.error('Error loading database from localStorage', e);
-    return fallback || buildInitialDatabase();
+    console.error('Error saving database to localStorage', e);
   }
 };
 
-export const saveStoredData = (data: DatabaseState, key: string = STORAGE_KEY): void => {
+export const getStoredData = (key: string = STORAGE_KEY, fallback?: DatabaseState): DatabaseState => {
   try {
-    localStorage.setItem(key, JSON.stringify(data));
+    const identitas = localStorage.getItem(`${key}_IDENTITAS`);
+    const suratMasuk = localStorage.getItem(`${key}_SURAT_MASUK`);
+    const suratKeluar = localStorage.getItem(`${key}_SURAT_KELUAR`);
+    const restRaw = localStorage.getItem(`${key}_REST`);
+
+    if (!identitas || !suratMasuk || !suratKeluar || !restRaw) {
+      const initial = fallback || buildInitialDatabase();
+      saveStoredData(initial, key);
+      return initial;
+    }
+    
+    return {
+      identitasSekolah: JSON.parse(identitas),
+      suratMasuk: JSON.parse(suratMasuk),
+      suratKeluar: JSON.parse(suratKeluar),
+      ...JSON.parse(restRaw)
+    } as DatabaseState;
   } catch (e) {
-    console.error('Error saving database to localStorage', e);
+    console.error('Error loading database from localStorage', e);
+    return fallback || buildInitialDatabase();
   }
 };
 
