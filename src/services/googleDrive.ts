@@ -268,6 +268,54 @@ let cachedSuratMasukFolderId: string | null = null;
 /**
  * Find or Create nested folder path: TATA USAHA -> SURAT -> SURAT MASUK
  */
+/**
+ * Find or Create folder path: TATA USAHA -> 01_SURAT_MASUK
+ */
+export const findOrCreate01SuratMasukFolder = async (
+  accessToken: string
+): Promise<string> => {
+  if (!accessToken) {
+    throw new Error('AUTH_EXPIRED: Token Google Drive kosong.');
+  }
+
+  try {
+    const tataUsahaFolderId = await findOrCreateTataUsahaFolder(accessToken, 'TATA USAHA');
+
+    let folderId: string | null = null;
+    const query = `name = '01_SURAT_MASUK' and '${tataUsahaFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const res = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: query, fields: 'files(id, name)' }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (res.status === 401) {
+      invalidateGoogleAuth();
+      throw new Error('AUTH_EXPIRED');
+    }
+    if (res.ok) {
+      const data = await res.json();
+      if (data.files && data.files.length > 0) {
+        folderId = data.files[0].id;
+      }
+    }
+
+    if (!folderId) {
+      folderId = await createGoogleDriveFolder(accessToken, '01_SURAT_MASUK', tataUsahaFolderId);
+    }
+
+    return folderId;
+  } catch (error: any) {
+    if (error?.message?.includes('AUTH_EXPIRED')) {
+      invalidateGoogleAuth();
+      throw error;
+    }
+    console.warn('Warning creating 01_SURAT_MASUK folder:', error?.message || error);
+    return findOrCreateTataUsahaFolder(accessToken);
+  }
+};
+
+/**
+ * Find or Create the "FILE_LAMPIRAN_SURAT" sub-folder inside "01_SURAT_MASUK"
+ */
 export const findOrCreateSuratMasukUploadFolder = async (
   accessToken: string
 ): Promise<string> => {
@@ -280,59 +328,37 @@ export const findOrCreateSuratMasukUploadFolder = async (
   }
 
   try {
-    // 1. Get or create root "TATA USAHA" folder
-    const tataUsahaFolderId = await findOrCreateTataUsahaFolder(accessToken, 'TATA USAHA');
+    const suratMasukFolderId = await findOrCreate01SuratMasukFolder(accessToken);
 
-    // 2. Find or create "SURAT" folder inside "TATA USAHA"
-    let suratFolderId: string | null = null;
-    const querySurat = `(name = 'SURAT' or name = 'SURAT-SURAT' or name = '01_SURAT') and '${tataUsahaFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-    const resSurat = await fetch(
-      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: querySurat, fields: 'files(id, name)' }).toString()}`,
+    let folderId: string | null = null;
+    const query = `name = 'FILE_LAMPIRAN_SURAT' and '${suratMasukFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const res = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: query, fields: 'files(id, name)' }).toString()}`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
-    if (resSurat.status === 401) {
+    if (res.status === 401) {
       invalidateGoogleAuth();
       throw new Error('AUTH_EXPIRED');
     }
-    if (resSurat.ok) {
-      const dataSurat = await resSurat.json();
-      if (dataSurat.files && dataSurat.files.length > 0) {
-        suratFolderId = dataSurat.files[0].id;
+    if (res.ok) {
+      const data = await res.json();
+      if (data.files && data.files.length > 0) {
+        folderId = data.files[0].id;
       }
     }
-    if (!suratFolderId) {
-      suratFolderId = await createGoogleDriveFolder(accessToken, 'SURAT', tataUsahaFolderId);
+
+    if (!folderId) {
+      folderId = await createGoogleDriveFolder(accessToken, 'FILE_LAMPIRAN_SURAT', suratMasukFolderId);
     }
 
-    // 3. Find or create "SURAT MASUK" folder inside "SURAT"
-    let suratMasukFolderId: string | null = null;
-    const querySM = `(name = 'SURAT MASUK' or name = '01_SURAT_MASUK' or name = 'SURAT-MASUK') and '${suratFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-    const resSM = await fetch(
-      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: querySM, fields: 'files(id, name)' }).toString()}`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-    if (resSM.status === 401) {
-      invalidateGoogleAuth();
-      throw new Error('AUTH_EXPIRED');
-    }
-    if (resSM.ok) {
-      const dataSM = await resSM.json();
-      if (dataSM.files && dataSM.files.length > 0) {
-        suratMasukFolderId = dataSM.files[0].id;
-      }
-    }
-    if (!suratMasukFolderId) {
-      suratMasukFolderId = await createGoogleDriveFolder(accessToken, 'SURAT MASUK', suratFolderId);
-    }
-
-    cachedSuratMasukFolderId = suratMasukFolderId;
-    return suratMasukFolderId;
+    cachedSuratMasukFolderId = folderId;
+    return folderId;
   } catch (error: any) {
     if (error?.message?.includes('AUTH_EXPIRED') || error?.message?.includes('invalid authentication credentials')) {
       invalidateGoogleAuth();
       throw error;
     }
-    console.warn('Warning creating TATA USAHA/SURAT/SURAT MASUK folder:', error?.message || error);
+    console.warn('Warning creating FILE_LAMPIRAN_SURAT folder:', error?.message || error);
     return findOrCreateTataUsahaFolder(accessToken);
   }
 };

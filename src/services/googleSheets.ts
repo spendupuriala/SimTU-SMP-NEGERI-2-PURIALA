@@ -495,9 +495,9 @@ export const parseSuratMasukFromRows = (rawRows: string[][]): ParsedSheetSuratMa
     'pengirim', 'asal', 'dari', 'instansi',
     'perihal', 'hal', 'isi', 'ringkas', 'tentang', 'uraian',
     'sifat', 'klasifikasi',
-    'disposisi', 'diteruskan', 'tujuan',
+    'disposisi', 'diteruskan', 'tujuan', 'kepsek',
     'instruksi', 'petunjuk', 'catatan',
-    'keterangan', 'ket', 'status',
+    'keterangan', 'ket', 'status', 'lampiran', 'link'
   ];
 
   let headerRowIndex = 0;
@@ -531,89 +531,45 @@ export const parseSuratMasukFromRows = (rawRows: string[][]): ParsedSheetSuratMa
   const headers = (rawRows[headerRowIndex] || []).map((h) => String(h || '').trim());
   const potentialDataRows = rawRows.slice(headerRowIndex + 1);
 
-  // Helper to match column headers using strict priority rules
+  // Helper to match column headers using priority rules
   const findColIndex = (testFn: (headerText: string, index: number) => boolean): number => {
     return headers.findIndex((h, idx) => testFn(String(h || '').toLowerCase().trim(), idx));
   };
 
-  // 1. Tanggal Terima / Tanggal Surat Masuk (e.g. "TANGGAL SURAT MASUK", "TGL SURAT MASUK", "TANGGAL TERIMA")
-  let colTanggalTerima = findColIndex((h) =>
-    h.includes('tanggal surat masuk') ||
-    h.includes('tgl surat masuk') ||
-    h.includes('tgl masuk') ||
-    h.includes('surat masuk') ||
-    h.includes('tanggal terima') ||
-    h.includes('tgl terima') ||
-    h.includes('diterima') ||
-    h.includes('terima')
-  );
-
-  // 2. Nomor Surat (e.g. "NOMOR SURAT", "NO. SURAT", "NO SURAT")
-  let colNoSurat = findColIndex((h) =>
-    h.includes('nomor surat') ||
-    h.includes('no surat') ||
-    h.includes('no. surat') ||
-    h.includes('no_surat')
-  );
-
-  // 3. Tanggal Surat (Exclude "tanggal surat masuk")
-  let colTanggalSurat = findColIndex((h, idx) =>
-    idx !== colTanggalTerima &&
-    (h.includes('tanggal surat') || h.includes('tgl surat') || h.includes('tgl. surat') || h.includes('tgl_surat'))
-  );
-
-  // 4. Asal / Pengirim (e.g. "PENGIRIM", "ASAL SURAT", "DARI", "INSTANSI")
-  let colAsalSurat = findColIndex((h) =>
-    h.includes('pengirim') ||
-    h.includes('asal surat') ||
-    h.includes('dari') ||
-    h.includes('instansi') ||
-    (h.includes('asal') && !h.includes('masalah'))
-  );
-
-  // 5. Perihal / Isi Ringkas (e.g. "PERIHAL", "ISI RINGKAS", "HAL", "TENTANG")
-  let colPerihal = findColIndex((h) =>
-    h.includes('perihal') ||
-    h.includes('isi ringkas') ||
-    h.includes('hal') ||
-    h.includes('tentang') ||
-    h.includes('isi surat') ||
-    h.includes('ringkasan') ||
-    h.includes('uraian') ||
-    h === 'isi'
-  );
-
-  // 6. Keterangan (e.g. "KET", "KETERANGAN")
-  let colKeterangan = findColIndex((h) =>
-    h === 'ket' ||
-    h.includes('keterangan') ||
-    h.includes('status') ||
-    h.includes('link') ||
-    h.includes('drive')
-  );
-
-  // 7. No Agenda / No Urut (Must not be colNoSurat)
-  let colNoAgenda = findColIndex((h, idx) =>
-    idx !== colNoSurat &&
-    (h === 'no' || h === 'no.' || h === 'nomor' || h.includes('agenda') || h.includes('urut') || h.includes('kode'))
-  );
-
-  // 8. Sifat & Kategori & Disposisi
+  // Detect column indexes for the specific 10 headers
+  let colNo = findColIndex((h) => h === 'no.' || h === 'no' || h === 'nomor urut');
+  let colNoAgenda = findColIndex((h) => h.includes('agenda'));
+  let colTanggalTerima = findColIndex((h) => h.includes('terima') || h.includes('masuk'));
+  let colNoSurat = findColIndex((h) => h.includes('nomor surat') || h.includes('no surat') || h.includes('no. surat'));
+  let colTanggalSurat = findColIndex((h, idx) => idx !== colTanggalTerima && (h.includes('tanggal surat') || h.includes('tgl surat') || h.includes('tgl. surat')));
+  let colAsalSurat = findColIndex((h) => h.includes('asal') || h.includes('pengirim') || h.includes('dari'));
+  let colPerihal = findColIndex((h) => h.includes('perihal') || h.includes('isi ringkas') || h.includes('tentang') || h.includes('hal') || h === 'isi');
   let colSifat = findColIndex((h) => h.includes('sifat') || h.includes('klasifikasi'));
-  let colKategori = findColIndex((h) => h.includes('kategori') || h.includes('jenis') || h.includes('bidang'));
-  let colDisposisi = findColIndex((h) => h.includes('disposisi') || h.includes('diteruskan') || h.includes('tujuan'));
-  let colInstruksi = findColIndex((h) => h.includes('instruksi') || h.includes('petunjuk') || h.includes('arahan'));
+  let colDisposisi = findColIndex((h) => h.includes('disposisi') || h.includes('kepsek') || h.includes('instruksi') || h.includes('catatan'));
+  let colLampiran = findColIndex((h) => h.includes('lampiran') || h.includes('link') || h.includes('file') || h.includes('berkas'));
 
   // Positional standard fallback only for missing critical fields
-  if (colNoAgenda === -1 && headers.length > 0) colNoAgenda = 0;
-  if (colTanggalTerima === -1 && headers.length > 1) colTanggalTerima = 1;
-  if (colAsalSurat === -1 && headers.length > 2) colAsalSurat = 2;
+  if (colNo === -1 && headers.length > 0) colNo = 0;
+  if (colNoAgenda === -1 && headers.length > 1) colNoAgenda = 1;
+  if (colTanggalTerima === -1 && headers.length > 2) colTanggalTerima = 2;
   if (colNoSurat === -1 && headers.length > 3) colNoSurat = 3;
   if (colTanggalSurat === -1 && headers.length > 4) colTanggalSurat = 4;
-  if (colPerihal === -1 && headers.length > 5) colPerihal = 5;
-  if (colKeterangan === -1 && headers.length > 6) colKeterangan = 6;
+  if (colAsalSurat === -1 && headers.length > 5) colAsalSurat = 5;
+  if (colPerihal === -1 && headers.length > 6) colPerihal = 6;
+  if (colSifat === -1 && headers.length > 7) colSifat = 7;
+  if (colDisposisi === -1 && headers.length > 8) colDisposisi = 8;
+  if (colLampiran === -1 && headers.length > 9) colLampiran = 9;
 
   const suratList: SuratMasuk[] = [];
+
+  const extractFileIdFromUrl = (url: string): string | undefined => {
+    if (!url) return undefined;
+    const match = url.match(/\/d\/([a-zA-Z0-9-_]+)/);
+    if (match) return match[1];
+    const idMatch = url.match(/[?&]id=([a-zA-Z0-9-_]+)/);
+    if (idMatch) return idMatch[1];
+    return undefined;
+  };
 
   potentialDataRows.forEach((row, idx) => {
     // 1. Skip completely empty rows
@@ -631,27 +587,15 @@ export const parseSuratMasukFromRows = (rawRows: string[][]): ParsedSheetSuratMa
       return;
     }
 
-    // 3. Skip footer signature blocks and metadata annotations
+    // 3. Skip footer signature blocks
     if (
       rowFullText.includes('mengetahui') ||
       rowFullText.includes('kepala sekolah') ||
       rowFullText.includes('kepala tata usaha') ||
       rowFullText.includes('nip.') ||
-      rowFullText.includes('pembina tk. i') ||
-      (rowFullText.startsWith('puriala,') && !rowFullText.includes('undangan')) ||
-      rowFullText.includes('lembar disposisi') ||
-      rowFullText.includes('pemerintah kabupaten konawe') ||
-      rowFullText.includes('dinas pendidikan dan kebudayaan')
+      rowFullText.includes('puriala,')
     ) {
-      // Check if it's purely a footer/signature row (not a letter about Dinas Dikbud)
-      const hasRealLetterContent = row.some((c) => {
-        const val = String(c || '').trim();
-        return (val.includes('/') && val.length > 10) || val.toLowerCase().includes('undangan') || val.toLowerCase().includes('edaran');
-      });
-
-      if (!hasRealLetterContent) {
-        return;
-      }
+      return;
     }
 
     const getVal = (colIdx: number, defaultVal = ''): string => {
@@ -668,13 +612,10 @@ export const parseSuratMasukFromRows = (rawRows: string[][]): ParsedSheetSuratMa
     const rawAsalSurat = getVal(colAsalSurat);
     const rawPerihal = getVal(colPerihal);
     const rawSifat = getVal(colSifat, 'Biasa');
-    const rawKategori = getVal(colKategori);
     const rawDisposisi = getVal(colDisposisi);
-    const rawInstruksi = getVal(colInstruksi);
-    const rawKeterangan = getVal(colKeterangan);
+    const rawLampiran = getVal(colLampiran);
 
-    // 4. Strict Validation: Row MUST have meaningful letter content
-    // A row is valid if it has a perihal or a nomor surat or an asal pengirim or a tanggal
+    // 4. Strict Validation: Row MUST have meaningful content
     const cleanPerihal = String(rawPerihal || '').trim();
     const cleanNoSurat = String(rawNoSurat || '').trim();
     const cleanAsal = String(rawAsalSurat || '').trim();
@@ -687,7 +628,7 @@ export const parseSuratMasukFromRows = (rawRows: string[][]): ParsedSheetSuratMa
     const currentNumber = suratList.length + 1;
     const tanggalTerimaVal = formatSheetDate(rawTanggalTerima) || new Date().toISOString().split('T')[0];
     const tanggalSuratVal = formatSheetDate(rawTanggalSurat) || tanggalTerimaVal;
-    const yearForAgenda = (tanggalSuratVal || tanggalTerimaVal || '2025').slice(0, 4);
+    const yearForAgenda = (tanggalSuratVal || tanggalTerimaVal || '2026').slice(0, 4);
 
     let formattedAgendaNo = rawNoAgenda;
     if (!formattedAgendaNo || /^\d+$/.test(formattedAgendaNo)) {
@@ -717,7 +658,7 @@ export const parseSuratMasukFromRows = (rawRows: string[][]): ParsedSheetSuratMa
           .filter(Boolean)
       : [];
 
-    const hasDisposisi = diteruskanArray.length > 0 || Boolean(rawInstruksi);
+    const hasDisposisi = diteruskanArray.length > 0 || Boolean(rawDisposisi);
 
     const item: SuratMasuk = {
       id: `SM-GDRIVE-${Date.now()}-${suratList.length}`,
@@ -728,15 +669,19 @@ export const parseSuratMasukFromRows = (rawRows: string[][]): ParsedSheetSuratMa
       asalSurat: asalSuratVal,
       perihal: perihalVal,
       sifat: sifatVal,
-      kategori: rawKategori || 'Umum / Dinas',
-      ringkasan: perihalVal + (rawKeterangan ? ` (${rawKeterangan})` : ''),
+      kategori: 'Umum / Dinas',
+      ringkasan: perihalVal,
       statusDisposisi: hasDisposisi ? 'Sudah Disposisi' : 'Belum Disposisi',
       diteruskanKepada: diteruskanArray.length > 0 ? diteruskanArray : ['Wakasek Kurikulum', 'Kepala Tata Usaha'],
-      instruksiDisposisi: rawInstruksi || (hasDisposisi ? 'Tindak lanjuti dan arsipkan' : ''),
-      catatanKepsek: rawInstruksi,
+      instruksiDisposisi: rawDisposisi || '',
+      catatanKepsek: rawDisposisi || '',
       tanggalDisposisi: hasDisposisi ? tanggalTerimaVal : undefined,
       statusDrive: 'Tersimpan',
-      drivePath: `/Tata Usaha/Aplikasi Tata Usaha/KOTAK MASUK`,
+      drivePath: 'TATA USAHA/01_SURAT_MASUK',
+      driveFileId: rawLampiran ? extractFileIdFromUrl(rawLampiran) : undefined,
+      driveWebViewLink: rawLampiran || undefined,
+      fileUrl: rawLampiran || undefined,
+      lampiranNama: rawLampiran ? 'Lampiran Surat' : undefined,
     };
 
     suratList.push(item);
@@ -982,72 +927,94 @@ export const writeSuratMasukToSheet = async (
   suratList: SuratMasuk[],
   sheetName: string = 'SURAT MASUK'
 ): Promise<void> => {
-  const defaultHeaders = [
-    'No.',
-    'No. Agenda',
-    'Tanggal Terima',
-    'Nomor Surat',
-    'Tanggal Surat',
-    'Asal Surat / Pengirim',
-    'Perihal / Isi Ringkas',
-    'Sifat Surat',
-    'Kategori',
-    'Status Disposisi',
-    'Diteruskan Kepada',
-    'Instruksi / Catatan Kepsek',
-    'Status Google Drive',
+  const headers = [
+    'NO.',
+    'NO. AGENDA',
+    'TGL TERIMA',
+    'NOMOR SURAT',
+    'TGL SURAT',
+    'ASAL PENGIRIM',
+    'PERIHAL / ISI RINGKAS',
+    'SIFAT',
+    'DISPOSISI KEPSEK',
+    'LINK LAMPIRAN'
   ];
 
-  await writeTemplatePreservingDataToSheet(
-    accessToken,
-    spreadsheetId,
-    sheetName,
-    suratList,
-    defaultHeaders,
-    (s: SuratMasuk, index: number, headers: string[]) => {
-      const findIndex = (kws: string[]) =>
-        headers.findIndex((h) => kws.some((kw) => h.toLowerCase().includes(kw)));
-
-      const cNo = findIndex(['no.', 'nomor urut', 'no']);
-      const cAgenda = findIndex(['no. agenda', 'no agenda', 'agenda', 'kode']);
-      const cTglTerima = findIndex(['tanggal terima', 'tgl terima', 'diterima']);
-      const cNoSurat = findIndex(['nomor surat', 'no surat', 'no. surat']);
-      const cTglSurat = findIndex(['tanggal surat', 'tgl surat', 'tgl. surat']);
-      const cAsal = findIndex(['asal surat', 'pengirim', 'dari', 'instansi']);
-      const cPerihal = findIndex(['perihal', 'isi ringkas', 'tentang', 'hal', 'uraian']);
-      const cSifat = findIndex(['sifat', 'klasifikasi']);
-      const cKategori = findIndex(['kategori', 'jenis']);
-      const cStatusDisp = findIndex(['status disposisi', 'disposisi']);
-      const cDiteruskan = findIndex(['diteruskan', 'tujuan disposisi']);
-      const cInstruksi = findIndex(['instruksi', 'catatan kepsek', 'catatan']);
-      const cDrive = findIndex(['status drive', 'drive', 'berkas']);
-
-      const rowValues = new Array(headers.length).fill('');
-      
-      const setVal = (idx: number, fallbackIdx: number, val: any) => {
-        const target = idx >= 0 ? idx : (fallbackIdx < headers.length ? fallbackIdx : -1);
-        if (target >= 0 && target < headers.length) {
-          rowValues[target] = val !== undefined && val !== null ? val : '';
-        }
-      };
-
-      setVal(cNo, 0, index + 1);
-      setVal(cAgenda, 1, s.noAgenda || `${index + 1}/SM/2026`);
-      setVal(cTglTerima, 2, s.tanggalTerima || '');
-      setVal(cNoSurat, 3, s.noSurat || '');
-      setVal(cTglSurat, 4, s.tanggalSurat || '');
-      setVal(cAsal, 5, s.asalSurat || '');
-      setVal(cPerihal, 6, s.perihal || '');
-      setVal(cSifat, 7, s.sifat || 'Biasa');
-      setVal(cKategori, 8, s.kategori || '-');
-      setVal(cStatusDisp, 9, s.statusDisposisi || 'Belum Disposisi');
-      setVal(cDiteruskan, 10, (s.diteruskanKepada || []).join(', '));
-      setVal(cInstruksi, 11, s.instruksiDisposisi || s.catatanKepsek || '');
-      setVal(cDrive, 12, s.statusDrive || 'Tersimpan');
-
-      return rowValues;
+  // 1. Ensure sheet exists
+  try {
+    const meta = await getSpreadsheetMetadata(accessToken, spreadsheetId);
+    if (!meta.sheetNames.includes(sheetName)) {
+      await fetch(`${SHEETS_API_URL}/${spreadsheetId}:batchUpdate`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          requests: [
+            {
+              addSheet: {
+                properties: {
+                  title: sheetName,
+                  gridProperties: { frozenRowCount: 1 },
+                },
+              },
+            },
+          ],
+        }),
+      });
     }
-  );
+  } catch (e) {
+    console.warn(`Could not verify/add sheet tab "${sheetName}":`, e);
+  }
+
+  // 2. Map data to the exact 10 columns
+  const dataRows = suratList.map((s, index) => {
+    return [
+      index + 1,
+      s.noAgenda || '',
+      s.tanggalTerima || '',
+      s.noSurat || '',
+      s.tanggalSurat || '',
+      s.asalSurat || '',
+      s.perihal || s.ringkasan || '',
+      s.sifat || 'Biasa',
+      s.instruksiDisposisi || s.catatanKepsek || '',
+      s.driveWebViewLink || s.fileUrl || ''
+    ];
+  });
+
+  const allRows = [headers, ...dataRows];
+
+  // 3. Clear existing rows in the sheet
+  const clearRange = encodeURIComponent(`${sheetName}!A1:Z5000`);
+  await fetch(`${SHEETS_API_URL}/${spreadsheetId}/values/${clearRange}:clear`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+  }).catch((err) => console.warn('Non-blocking error clearing sheet:', err));
+
+  // 4. Write new data starting at A1
+  const writeRange = encodeURIComponent(`${sheetName}!A1`);
+  const res = await fetch(`${SHEETS_API_URL}/${spreadsheetId}/values/${writeRange}?valueInputOption=USER_ENTERED`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      range: `${sheetName}!A1`,
+      majorDimension: 'ROWS',
+      values: allRows,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `Gagal menulis data ke spreadsheet "${sheetName}"`);
+  }
 };
 
 /**
@@ -2786,6 +2753,82 @@ export const findOrCreateGuruPTKAgendaSheet = async (
   }
 
   return { spreadsheetId, webViewLink, folderId: ptkFolderId };
+};
+
+/**
+ * Find or Create the "BUKU_AGENDA_SURAT_MASUK" Spreadsheet inside "TATA USAHA/01_SURAT_MASUK" folder.
+ */
+export const findOrCreateSuratMasukSpreadsheet = async (
+  accessToken: string,
+  initialSuratList: SuratMasuk[] = []
+): Promise<{ spreadsheetId: string; webViewLink: string; folderId: string }> => {
+  // 1. Get or create 01_SURAT_MASUK folder inside TATA USAHA
+  const { findOrCreate01SuratMasukFolder } = await import('./googleDrive');
+  const folderId = await findOrCreate01SuratMasukFolder(accessToken);
+
+  // 2. Search for spreadsheet "BUKU_AGENDA_SURAT_MASUK" inside folderId
+  const sheetQuery = `mimeType = 'application/vnd.google-apps.spreadsheet' and name = 'BUKU_AGENDA_SURAT_MASUK' and '${folderId}' in parents and trashed = false`;
+  let spreadsheetId = '';
+  let webViewLink = '';
+
+  const sheetRes = await fetch(`${DRIVE_API_URL}/files?${new URLSearchParams({ q: sheetQuery, fields: 'files(id, webViewLink)' }).toString()}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (sheetRes.ok) {
+    const sheetData = await sheetRes.json();
+    if (sheetData.files && sheetData.files.length > 0) {
+      spreadsheetId = sheetData.files[0].id;
+      webViewLink = sheetData.files[0].webViewLink;
+    }
+  }
+
+  // 3. If not exists, create new Spreadsheet
+  if (!spreadsheetId) {
+    const createSheet = await fetch(SHEETS_API_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        properties: {
+          title: 'BUKU_AGENDA_SURAT_MASUK',
+        },
+        sheets: [
+          {
+            properties: {
+              title: 'SURAT MASUK',
+              gridProperties: {
+                frozenRowCount: 1,
+              },
+            },
+          },
+        ],
+      }),
+    });
+
+    if (!createSheet.ok) {
+      const err = await createSheet.json().catch(() => ({}));
+      throw new Error(err?.error?.message || 'Gagal membuat spreadsheet BUKU_AGENDA_SURAT_MASUK');
+    }
+
+    const sheetData = await createSheet.json();
+    spreadsheetId = sheetData.spreadsheetId;
+    webViewLink = sheetData.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+
+    // Move file to folder '01_SURAT_MASUK'
+    await fetch(`${DRIVE_API_URL}/files/${spreadsheetId}?addParents=${folderId}&fields=id,parents`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  }
+
+  // 4. Populate with initial Surat Masuk data if initial list is specified
+  if (initialSuratList.length > 0) {
+    await writeSuratMasukToSheet(accessToken, spreadsheetId, initialSuratList, 'SURAT MASUK');
+  }
+
+  return { spreadsheetId, webViewLink, folderId };
 };
 
 

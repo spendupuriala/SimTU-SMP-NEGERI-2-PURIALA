@@ -41,13 +41,12 @@ import {
 } from 'lucide-react';
 import { SuratMasuk, SifatSurat, IdentitasSekolah } from '../types';
 import {
-  searchTataUsahaSpreadsheets,
   getSpreadsheetMetadata,
   readSheetData,
   resolveSheetTabName,
   parseSuratMasukFromRows,
   writeSuratMasukToSheet,
-  createTataUsahaSpreadsheetWithSuratMasuk,
+  findOrCreateSuratMasukSpreadsheet,
   SpreadsheetSearchResult,
   ParsedSheetSuratMasuk,
 } from '../services/googleSheets';
@@ -172,7 +171,7 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
     instruksiDisposisi: '',
     catatanKepsek: '',
     statusDrive: 'Tersimpan',
-    drivePath: 'TATA USAHA/SURAT/SURAT MASUK',
+    drivePath: 'TATA USAHA/01_SURAT_MASUK/FILE_LAMPIRAN_SURAT',
   });
 
   // Auto-discover "Tata Usaha / Aplikasi Tata Usaha" spreadsheet when token changes
@@ -185,28 +184,14 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
   const autoDetectSpreadsheet = async (token: string) => {
     try {
       setIsLoadingSheets(true);
-      const results = await searchTataUsahaSpreadsheets(token);
-      setAvailableSpreadsheets(results);
-
-      if (results.length > 0) {
-        // Pick the most relevant one (prioritizing "Aplikasi Tata Usaha" in "Tata Usaha")
-        const target = results[0];
-        const tabName = await resolveSheetTabName(token, target.id, [
-          'KOTAK MASUK',
-          'SURAT MASUK',
-          'Kotak Masuk',
-          'Surat Masuk',
-          'Inbox',
-        ]);
-
-        setConnectedSpreadsheet({
-          id: target.id,
-          name: target.name,
-          folderName: target.folderName || 'Tata Usaha',
-          sheetName: tabName,
-          webViewLink: target.webViewLink || `https://docs.google.com/spreadsheets/d/${target.id}/edit`,
-        });
-      }
+      const res = await findOrCreateSuratMasukSpreadsheet(token, suratList);
+      setConnectedSpreadsheet({
+        id: res.spreadsheetId,
+        name: 'BUKU_AGENDA_SURAT_MASUK',
+        folderName: '01_SURAT_MASUK',
+        sheetName: 'SURAT MASUK',
+        webViewLink: res.webViewLink,
+      });
     } catch (err: any) {
       console.warn('Auto detect spreadsheet error:', err);
     } finally {
@@ -214,7 +199,7 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
     }
   };
 
-  // Fetch / Import data directly from Google Sheets (KOTAK MASUK / SURAT MASUK)
+  // Fetch / Import data directly from Google Sheets (SURAT MASUK)
   const handleFetchFromGoogleSheet = async () => {
     if (!googleToken) {
       if (onConnectGoogle) onConnectGoogle();
@@ -224,32 +209,19 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
     let targetSpreadsheet = connectedSpreadsheet;
 
     if (!targetSpreadsheet?.id) {
-      // Try auto-detect
       try {
         setIsLoadingSheets(true);
-        const results = await searchTataUsahaSpreadsheets(googleToken);
-        if (results.length > 0) {
-          const target = results[0];
-          const tabName = await resolveSheetTabName(googleToken, target.id, [
-            'KOTAK MASUK',
-            'SURAT MASUK',
-            'Kotak Masuk',
-            'Surat Masuk',
-          ]);
-          targetSpreadsheet = {
-            id: target.id,
-            name: target.name,
-            folderName: target.folderName || 'Tata Usaha',
-            sheetName: tabName,
-            webViewLink: target.webViewLink || `https://docs.google.com/spreadsheets/d/${target.id}/edit`,
-          };
-          setConnectedSpreadsheet(targetSpreadsheet);
-        } else {
-          setIsSpreadsheetPickerOpen(true);
-          return;
-        }
-      } catch {
-        setIsSpreadsheetPickerOpen(true);
+        const res = await findOrCreateSuratMasukSpreadsheet(googleToken, suratList);
+        targetSpreadsheet = {
+          id: res.spreadsheetId,
+          name: 'BUKU_AGENDA_SURAT_MASUK',
+          folderName: '01_SURAT_MASUK',
+          sheetName: 'SURAT MASUK',
+          webViewLink: res.webViewLink,
+        };
+        setConnectedSpreadsheet(targetSpreadsheet);
+      } catch (err: any) {
+        showNotification(`Gagal menyambungkan spreadsheet: ${err.message}`, 'error');
         return;
       } finally {
         setIsLoadingSheets(false);
@@ -260,10 +232,7 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
       setIsLoadingSheets(true);
       const tabName = await resolveSheetTabName(googleToken, targetSpreadsheet.id, [
         targetSpreadsheet.sheetName,
-        'KOTAK MASUK',
         'SURAT MASUK',
-        'Kotak Masuk',
-        'Surat Masuk',
       ]);
 
       if (tabName !== targetSpreadsheet.sheetName) {
@@ -288,7 +257,7 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
     }
   };
 
-  // Direct Replace All Data from Google Sheet (KOTAK MASUK / SURAT MASUK)
+  // Direct Replace All Data from Google Sheet (SURAT MASUK)
   const handleDirectReplaceFromSheet = async () => {
     if (!googleToken) {
       if (onConnectGoogle) onConnectGoogle();
@@ -300,29 +269,17 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
     if (!targetSpreadsheet?.id) {
       try {
         setIsLoadingSheets(true);
-        const results = await searchTataUsahaSpreadsheets(googleToken);
-        if (results.length > 0) {
-          const target = results[0];
-          const tabName = await resolveSheetTabName(googleToken, target.id, [
-            'KOTAK MASUK',
-            'SURAT MASUK',
-            'Kotak Masuk',
-            'Surat Masuk',
-          ]);
-          targetSpreadsheet = {
-            id: target.id,
-            name: target.name,
-            folderName: target.folderName || 'Tata Usaha',
-            sheetName: tabName,
-            webViewLink: target.webViewLink || `https://docs.google.com/spreadsheets/d/${target.id}/edit`,
-          };
-          setConnectedSpreadsheet(targetSpreadsheet);
-        } else {
-          setIsSpreadsheetPickerOpen(true);
-          return;
-        }
-      } catch {
-        setIsSpreadsheetPickerOpen(true);
+        const res = await findOrCreateSuratMasukSpreadsheet(googleToken, suratList);
+        targetSpreadsheet = {
+          id: res.spreadsheetId,
+          name: 'BUKU_AGENDA_SURAT_MASUK',
+          folderName: '01_SURAT_MASUK',
+          sheetName: 'SURAT MASUK',
+          webViewLink: res.webViewLink,
+        };
+        setConnectedSpreadsheet(targetSpreadsheet);
+      } catch (err: any) {
+        showNotification(`Gagal menyambungkan spreadsheet: ${err.message}`, 'error');
         return;
       } finally {
         setIsLoadingSheets(false);
@@ -333,10 +290,7 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
       setIsLoadingSheets(true);
       const tabName = await resolveSheetTabName(googleToken, targetSpreadsheet.id, [
         targetSpreadsheet.sheetName,
-        'KOTAK MASUK',
         'SURAT MASUK',
-        'Kotak Masuk',
-        'Surat Masuk',
       ]);
 
       if (tabName !== targetSpreadsheet.sheetName) {
@@ -413,7 +367,22 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
     }
 
     if (!connectedSpreadsheet?.id) {
-      setIsSpreadsheetPickerOpen(true);
+      try {
+        setIsSyncingToSheet(true);
+        const res = await findOrCreateSuratMasukSpreadsheet(googleToken, suratList);
+        setConnectedSpreadsheet({
+          id: res.spreadsheetId,
+          name: 'BUKU_AGENDA_SURAT_MASUK',
+          folderName: '01_SURAT_MASUK',
+          sheetName: 'SURAT MASUK',
+          webViewLink: res.webViewLink,
+        });
+        showNotification('Berhasil menyinkronkan data Surat Masuk ke Google Sheets!', 'success');
+      } catch (err: any) {
+        showNotification(`Gagal menyambungkan spreadsheet: ${err.message}`, 'error');
+      } finally {
+        setIsSyncingToSheet(false);
+      }
       return;
     }
 
@@ -442,20 +411,18 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
     if (!googleToken) return;
     try {
       setIsLoadingSheets(true);
-      const res = await createTataUsahaSpreadsheetWithSuratMasuk(googleToken, suratList);
+      const res = await findOrCreateSuratMasukSpreadsheet(googleToken, suratList);
       setConnectedSpreadsheet({
         id: res.spreadsheetId,
-        name: 'Aplikasi Tata Usaha',
-        folderName: 'Tata Usaha',
+        name: 'BUKU_AGENDA_SURAT_MASUK',
+        folderName: '01_SURAT_MASUK',
         sheetName: 'SURAT MASUK',
         webViewLink: res.webViewLink,
       });
       setIsSpreadsheetPickerOpen(false);
-      showNotification('Spreadsheet "Aplikasi Tata Usaha" berhasil dibuat di folder "Tata Usaha"!', 'success');
-      // Refresh list
-      autoDetectSpreadsheet(googleToken);
+      showNotification('Spreadsheet "BUKU_AGENDA_SURAT_MASUK" berhasil dibuat/ditemukan di folder "01_SURAT_MASUK"!', 'success');
     } catch (err: any) {
-      showNotification(`Gagal membuat spreadsheet: ${err.message}`, 'error');
+      showNotification(`Gagal menyambungkan spreadsheet: ${err.message}`, 'error');
     } finally {
       setIsLoadingSheets(false);
     }
@@ -481,13 +448,13 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
       if (onConnectGoogle) {
         onConnectGoogle();
       }
-      showNotification('Harap hubungkan Google Drive agar berkas langsung tersimpan ke folder TATA USAHA/SURAT/SURAT MASUK.', 'info');
+      showNotification('Harap hubungkan Google Drive agar berkas langsung tersimpan ke folder TATA USAHA/01_SURAT_MASUK/FILE_LAMPIRAN_SURAT.', 'info');
       return;
     }
 
     try {
       setIsUploadingAttachment(true);
-      setUploadAttachmentStatus('Mengunggah langsung ke Google Drive: TATA USAHA/SURAT/SURAT MASUK...');
+      setUploadAttachmentStatus('Mengunggah langsung ke Google Drive: TATA USAHA/01_SURAT_MASUK/FILE_LAMPIRAN_SURAT...');
 
       // Update basic metadata and temporary blob for live modal preview
       setFormData((prev) => ({
@@ -496,7 +463,7 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
         lampiranUkuran: sizeStr,
         fileMimeType: file.type || (isImage ? 'image/jpeg' : 'application/pdf'),
         fileUrl: localBlobUrl, // temporary blob url for immediate modal preview
-        drivePath: 'TATA USAHA/SURAT/SURAT MASUK',
+        drivePath: 'TATA USAHA/01_SURAT_MASUK/FILE_LAMPIRAN_SURAT',
         statusDrive: 'Mengunggah ke Drive...',
       }));
 
@@ -519,12 +486,12 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
         driveWebViewLink: driveLink,
         fileUrl: driveLink,
         statusDrive: 'Tersimpan',
-        drivePath: 'TATA USAHA/SURAT/SURAT MASUK',
+        drivePath: 'TATA USAHA/01_SURAT_MASUK/FILE_LAMPIRAN_SURAT',
       }));
 
-      setUploadAttachmentStatus('✓ Berkas otomatis tersimpan di Google Drive: TATA USAHA/SURAT/SURAT MASUK');
+      setUploadAttachmentStatus('✓ Berkas otomatis tersimpan di Google Drive: TATA USAHA/01_SURAT_MASUK/FILE_LAMPIRAN_SURAT');
       showNotification(
-        `Dokumen "${file.name}" berhasil diunggah langsung ke Google Drive di Folder "TATA USAHA/SURAT/SURAT MASUK"`,
+        `Dokumen "${file.name}" berhasil diunggah langsung ke Google Drive di Folder "TATA USAHA/01_SURAT_MASUK/FILE_LAMPIRAN_SURAT"`,
         'success'
       );
     } catch (err: any) {
@@ -575,7 +542,7 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
       instruksiDisposisi: '',
       catatanKepsek: '',
       statusDrive: googleToken ? 'Tersimpan' : 'Lokal Saja',
-      drivePath: 'TATA USAHA/SURAT/SURAT MASUK',
+      drivePath: 'TATA USAHA/01_SURAT_MASUK/FILE_LAMPIRAN_SURAT',
     });
     setEditingSurat(null);
     setUploadAttachmentStatus(null);
@@ -595,7 +562,7 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
     setFormData({ ...surat });
     setUploadAttachmentStatus(
       surat.driveFileId || surat.driveWebViewLink
-        ? '✓ Berkas tersimpan di Google Drive: TATA USAHA/SURAT/SURAT MASUK'
+        ? '✓ Berkas tersimpan di Google Drive: TATA USAHA/01_SURAT_MASUK/FILE_LAMPIRAN_SURAT'
         : surat.lampiranNama
         ? 'Berkas terlampir di data'
         : null
@@ -617,7 +584,7 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
         ...(editingSurat as SuratMasuk),
         ...formData,
         fileUrl: resolvedFileUrl,
-        drivePath: 'TATA USAHA/SURAT/SURAT MASUK',
+        drivePath: 'TATA USAHA/01_SURAT_MASUK/FILE_LAMPIRAN_SURAT',
         statusDrive: 'Tersimpan',
       } as SuratMasuk);
       showNotification(`Data surat masuk ${formData.noSurat} berhasil diperbarui!`, 'success');
@@ -646,7 +613,7 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
         catatanKepsek: formData.catatanKepsek || '',
         tanggalDisposisi: formData.statusDisposisi === 'Sudah Disposisi' ? new Date().toISOString().split('T')[0] : undefined,
         statusDrive: 'Tersimpan',
-        drivePath: 'TATA USAHA/SURAT/SURAT MASUK',
+        drivePath: 'TATA USAHA/01_SURAT_MASUK/FILE_LAMPIRAN_SURAT',
       };
       onAdd(newSurat);
       showNotification(`Surat masuk baru ${newSurat.noSurat} berhasil disimpan!`, 'success');
@@ -1029,7 +996,7 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="inline-flex items-center gap-1 text-[10px] text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded font-bold shadow-xs transition"
-                                title="Buka berkas di Google Drive: TATA USAHA/SURAT/SURAT MASUK"
+                                title="Buka berkas di Google Drive: TATA USAHA/01_SURAT_MASUK/FILE_LAMPIRAN_SURAT"
                               >
                                 <Cloud className="w-3 h-3 text-emerald-600" />
                                 <span className="truncate max-w-[130px]">{item.lampiranNama || 'Dokumen Drive'}</span>
@@ -1631,7 +1598,7 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
                         Upload File / Gambar Dokumen Surat Masuk
                       </h4>
                       <p className="text-[11px] text-slate-500">
-                        Otomatis tersimpan ke Google Drive: <span className="font-semibold text-blue-700">TATA USAHA/SURAT/SURAT MASUK</span>
+                        Otomatis tersimpan ke Google Drive: <span className="font-semibold text-blue-700">TATA USAHA/01_SURAT_MASUK/FILE_LAMPIRAN_SURAT</span>
                       </p>
                     </div>
                   </div>
@@ -1694,7 +1661,7 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
                           {isUploadingAttachment ? (
                             <div className="flex items-center gap-1.5 text-[11px] text-blue-600 font-bold animate-pulse pt-0.5">
                               <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
-                              <span>Mengunggah ke Google Drive: TATA USAHA/SURAT/SURAT MASUK...</span>
+                              <span>Mengunggah ke Google Drive: TATA USAHA/01_SURAT_MASUK/FILE_LAMPIRAN_SURAT...</span>
                             </div>
                           ) : formData.driveWebViewLink ? (
                             <div className="flex items-center gap-2 pt-0.5">
@@ -2039,7 +2006,7 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
                     <div className="min-w-0">
                       <p className="font-bold text-slate-800 truncate">{selectedSuratForDetail.lampiranNama}</p>
                       <p className="text-[10px] text-slate-500">
-                        {selectedSuratForDetail.lampiranUkuran || 'File Terlampir'} • Google Drive: TATA USAHA/SURAT/SURAT MASUK
+                        {selectedSuratForDetail.lampiranUkuran || 'File Terlampir'} • Google Drive: TATA USAHA/01_SURAT_MASUK/FILE_LAMPIRAN_SURAT
                       </p>
                     </div>
                   </div>
@@ -2138,7 +2105,7 @@ export const SuratMasukModule: React.FC<SuratMasukModuleProps> = ({
                   <FileText className="w-16 h-16 text-blue-500 mx-auto mb-3" />
                   <h4 className="font-bold text-slate-800 text-sm mb-1">{previewDocument.name}</h4>
                   <p className="text-xs text-slate-500 mb-4">
-                    Berkas ini tersimpan langsung di Google Drive folder <strong>TATA USAHA/SURAT/SURAT MASUK</strong>.
+                    Berkas ini tersimpan langsung di Google Drive folder <strong>TATA USAHA/01_SURAT_MASUK/FILE_LAMPIRAN_SURAT</strong>.
                   </p>
                   {previewDocument.driveWebViewLink && (
                     <a
