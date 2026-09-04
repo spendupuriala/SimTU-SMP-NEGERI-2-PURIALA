@@ -143,14 +143,28 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
     };
   };
 
-  const { sptNum, sppdNum } = getSptAndSppdNumbers();
-  const currentMonthRoman = getRomanMonth(new Date().getMonth());
-  const currentYear = new Date().getFullYear();
+  const generateSptSppdNumbers = (kode: string, dateStr?: string) => {
+    const { sptNum, sppdNum } = getSptAndSppdNumbers();
+    const date = dateStr ? new Date(dateStr) : new Date();
+    const monthIndex = isNaN(date.getTime()) ? new Date().getMonth() : date.getMonth();
+    const curMonthRoman = getRomanMonth(monthIndex);
+    const curYear = isNaN(date.getTime()) ? new Date().getFullYear() : date.getFullYear();
+
+    const cleanKode = kode || '090';
+
+    const noSuratTugas = `${cleanKode}/${sptNum}/SMP-02/PRL/SPT/${curMonthRoman}/${curYear}`;
+    const noSPPD = `${cleanKode}/${sppdNum}/SMP-02/PRL/SPPD/${curMonthRoman}/${curYear}`;
+
+    return { noSuratTugas, noSPPD };
+  };
+
+  const initialDateStr = new Date().toISOString().split('T')[0];
+  const initialNumbers = generateSptSppdNumbers('090', initialDateStr);
 
   const [formData, setFormData] = useState<Partial<SuratTugasDinas>>({
     kodeKlasifikasi: '090',
-    noSuratTugas: `090/${sptNum}/SMP.02/ST/${currentMonthRoman}/${currentYear}`,
-    noSPPD: `094/${sppdNum}/SPPD/SMP.02/${currentMonthRoman}/${currentYear}`,
+    noSuratTugas: initialNumbers.noSuratTugas,
+    noSPPD: initialNumbers.noSPPD,
     dasarPenugasan: 'Kepentingan Dinas Operasional Sekolah dan Pembinaan Tugas Tenaga Kependidikan',
     personil: [
       {
@@ -205,33 +219,39 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
   };
 
   const handleKodeKlasifikasiChange = (newKode: string) => {
-    const { sptNum } = getSptAndSppdNumbers();
-    const curMonthRoman = getRomanMonth(new Date().getMonth());
-    const curYear = new Date().getFullYear();
-    const parts = (formData.noSuratTugas || '').split('/');
-    let updatedNoSurat = formData.noSuratTugas || '';
-    if (parts.length > 1) {
-      parts[0] = newKode;
-      updatedNoSurat = parts.join('/');
-    } else {
-      updatedNoSurat = `${newKode}/${sptNum}/SMP.02/ST/${curMonthRoman}/${curYear}`;
-    }
-    setFormData({
-      ...formData,
+    const { noSuratTugas, noSPPD } = generateSptSppdNumbers(
+      newKode,
+      formData.tanggalSurat || formData.tanggalBerangkat || new Date().toISOString().split('T')[0]
+    );
+    setFormData((prev) => ({
+      ...prev,
       kodeKlasifikasi: newKode,
-      noSuratTugas: updatedNoSurat,
-    });
+      noSuratTugas,
+      noSPPD,
+    }));
+  };
+
+  const handleTanggalSuratChange = (newDate: string) => {
+    const { noSuratTugas, noSPPD } = generateSptSppdNumbers(
+      formData.kodeKlasifikasi || '090',
+      newDate
+    );
+    setFormData((prev) => ({
+      ...prev,
+      tanggalSurat: newDate,
+      noSuratTugas,
+      noSPPD,
+    }));
   };
 
   const handleOpenAdd = () => {
-    const { sptNum, sppdNum } = getSptAndSppdNumbers();
-    const curMonthRoman = getRomanMonth(new Date().getMonth());
-    const curYear = new Date().getFullYear();
     setEditingItem(null);
+    const todayStr = new Date().toISOString().split('T')[0];
+    const { noSuratTugas, noSPPD } = generateSptSppdNumbers('090', todayStr);
     setFormData({
       kodeKlasifikasi: '090',
-      noSuratTugas: `090/${sptNum}/SMP.02/ST/${curMonthRoman}/${curYear}`,
-      noSPPD: `094/${sppdNum}/SPPD/SMP.02/${curMonthRoman}/${curYear}`,
+      noSuratTugas,
+      noSPPD,
       dasarPenugasan: 'Kepentingan Dinas Operasional Sekolah dan Pembinaan Tugas Tenaga Kependidikan',
       personil: [
         {
@@ -243,14 +263,14 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
       ],
       maksudTugas: '',
       tempatTujuan: 'Dinas Pendidikan dan Kebudayaan Kab. Konawe, Unaaha',
-      tanggalBerangkat: new Date().toISOString().split('T')[0],
-      tanggalKembali: new Date().toISOString().split('T')[0],
+      tanggalBerangkat: todayStr,
+      tanggalKembali: todayStr,
       lamaHari: 1,
       alatAngkut: 'Kendaraan Dinas',
       bebanAnggaran: 'Dana BOS SMPN 2 Puriala',
       status: 'Terbit',
       tempatPenetapan: 'Unggulino',
-      tanggalSurat: new Date().toISOString().split('T')[0],
+      tanggalSurat: todayStr,
       templateNama: 'Format Google Drive TATA USAHA/SURAT - Surat Tugas',
       drivePath: 'TATA USAHA/SURAT',
     });
@@ -289,14 +309,15 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
       // Auto-sync to Google Drive
       await handleSaveToDrive(updatedItem);
     } else {
-      const { sptNum, sppdNum } = getSptAndSppdNumbers();
-      const curMonthRoman = getRomanMonth(new Date().getMonth());
-      const curYear = new Date().getFullYear();
+      const fallbackNumbers = generateSptSppdNumbers(
+        selectedKode,
+        formData.tanggalSurat || formData.tanggalBerangkat || new Date().toISOString().split('T')[0]
+      );
       const newItem: SuratTugasDinas = {
         id: `ST-${Date.now()}`,
         kodeKlasifikasi: selectedKode,
-        noSuratTugas: formData.noSuratTugas || `${selectedKode}/${sptNum}/SMP.02/ST/${curMonthRoman}/${curYear}`,
-        noSPPD: formData.noSPPD || `094/${sppdNum}/SPPD/SMP.02/${curMonthRoman}/${curYear}`,
+        noSuratTugas: formData.noSuratTugas || fallbackNumbers.noSuratTugas,
+        noSPPD: formData.noSPPD || fallbackNumbers.noSPPD,
         dasarPenugasan: formData.dasarPenugasan || 'Kepentingan Dinas Operasional Sekolah',
         personil:
           formData.personil && formData.personil.length > 0
@@ -978,7 +999,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                     <input
                       type="date"
                       value={formData.tanggalSurat || formData.tanggalBerangkat || ''}
-                      onChange={(e) => setFormData({ ...formData, tanggalSurat: e.target.value })}
+                      onChange={(e) => handleTanggalSuratChange(e.target.value)}
                       className="border border-slate-300 rounded p-1.5"
                     />
                   </div>
