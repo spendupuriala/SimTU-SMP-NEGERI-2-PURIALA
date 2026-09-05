@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore } from 'firebase/firestore';
 import {
   getAuth,
   signInWithPopup,
@@ -13,7 +13,9 @@ import firebaseConfig from '../../firebase-applet-config.json';
 // Initialize Firebase App singleton safely
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+});
 
 // Configure Google Auth Provider with Drive & Sheets scopes
 export const GOOGLE_DRIVE_SCOPES = [

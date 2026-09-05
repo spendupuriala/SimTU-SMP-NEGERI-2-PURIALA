@@ -57,6 +57,8 @@ import {
   uploadDatabaseBackupToDrive,
   syncLiveDatabaseToTataUsahaFolder,
   GoogleDriveQuota,
+  loadSuratTugasDataFromDrive,
+  loadPembuatSuratDataFromDrive,
 } from './services/googleDrive';
 import { notifyGlobalSync, subscribeToGlobalSync } from './services/globalSync';
 
@@ -87,6 +89,7 @@ export default function App() {
     timestamp: string;
   } | null>(null);
   const isFirstSyncRef = React.useRef(true);
+  const [isDriveDataLoaded, setIsDriveDataLoaded] = useState(false);
 
   // Show Toast helper
   const showToast = (message: string, type: 'info' | 'success' | 'error' = 'info', duration: number = 3500) => {
@@ -171,9 +174,71 @@ export default function App() {
     return () => unsubscribe();
   }, [googleUser]);
 
-  // REAL-TIME AUTO-SYNC: Sync every state update directly to Google Drive Folder "TATA USAHA"
+  // Load Surat Tugas and Pembuat Surat archives from Google Drive when connected
   useEffect(() => {
     if (!googleToken) {
+      setIsDriveDataLoaded(false);
+      return;
+    }
+
+    let active = true;
+    const loadArchives = async () => {
+      try {
+        setIsSyncing(true);
+        const [driveSuratTugas, drivePembuatSurat] = await Promise.all([
+          loadSuratTugasDataFromDrive(googleToken),
+          loadPembuatSuratDataFromDrive(googleToken),
+        ]);
+
+        if (!active) return;
+
+        let hasChanges = false;
+        const updatedData = { ...data };
+
+        if (driveSuratTugas && Array.isArray(driveSuratTugas)) {
+          updatedData.suratTugas = driveSuratTugas;
+          hasChanges = true;
+        }
+
+        if (drivePembuatSurat && Array.isArray(drivePembuatSurat)) {
+          updatedData.pembuatSurat = drivePembuatSurat;
+          hasChanges = true;
+        }
+
+        if (hasChanges) {
+          // Sync with Surat Keluar list
+          const syncedSuratKeluar = syncAllModulesToSuratKeluar(
+            updatedData.suratKeluar || [],
+            updatedData.suratTugas || [],
+            updatedData.pembuatSurat || [],
+            updatedData.identitasSekolah
+          );
+          updatedData.suratKeluar = syncedSuratKeluar;
+
+          setData(updatedData);
+          saveStoredData(updatedData);
+          showToast('Arsip Surat Tugas dan Pembuat Surat diselaraskan dari Google Drive!', 'success');
+        }
+      } catch (err: any) {
+        console.warn('Error pulling archives from Google Drive:', err);
+      } finally {
+        if (active) {
+          setIsDriveDataLoaded(true);
+          setIsSyncing(false);
+        }
+      }
+    };
+
+    loadArchives();
+
+    return () => {
+      active = false;
+    };
+  }, [googleToken]);
+
+  // REAL-TIME AUTO-SYNC: Sync every state update directly to Google Drive Folder "TATA USAHA"
+  useEffect(() => {
+    if (!googleToken || !isDriveDataLoaded) {
       setAutoSyncStatus('idle');
       return;
     }
@@ -250,7 +315,7 @@ export default function App() {
     }, 1500);
 
     return () => clearTimeout(timer);
-  }, [data, googleToken]);
+  }, [data, googleToken, isDriveDataLoaded]);
 
   // Initial Sync: Pastikan Surat Tugas dan Pembuat Surat tersinkronisasi ke Buku Agenda Surat Keluar saat aplikasi dimuat
   useEffect(() => {
@@ -283,8 +348,42 @@ export default function App() {
         setGoogleUser(res.user);
         setGoogleToken(res.accessToken);
         await refreshQuota(res.accessToken);
-        // Immediately sync to TATA USAHA folder
-        await syncLiveDatabaseToTataUsahaFolder(res.accessToken, data);
+
+        // Safely pull existing archives from Google Drive folder 07_ARSIP_DOKUMEN_SURAT first
+        const [driveSuratTugas, drivePembuatSurat] = await Promise.all([
+          loadSuratTugasDataFromDrive(res.accessToken),
+          loadPembuatSuratDataFromDrive(res.accessToken),
+        ]);
+
+        let hasChanges = false;
+        const updatedData = { ...data };
+
+        if (driveSuratTugas && Array.isArray(driveSuratTugas)) {
+          updatedData.suratTugas = driveSuratTugas;
+          hasChanges = true;
+        }
+
+        if (drivePembuatSurat && Array.isArray(drivePembuatSurat)) {
+          updatedData.pembuatSurat = drivePembuatSurat;
+          hasChanges = true;
+        }
+
+        if (hasChanges) {
+          const syncedSuratKeluar = syncAllModulesToSuratKeluar(
+            updatedData.suratKeluar || [],
+            updatedData.suratTugas || [],
+            updatedData.pembuatSurat || [],
+            updatedData.identitasSekolah
+          );
+          updatedData.suratKeluar = syncedSuratKeluar;
+          setData(updatedData);
+          saveStoredData(updatedData);
+        }
+
+        // Immediately sync to TATA USAHA folder with the latest integrated state
+        await syncLiveDatabaseToTataUsahaFolder(res.accessToken, hasChanges ? updatedData : data);
+        setIsDriveDataLoaded(true);
+
         setAutoSyncStatus('synced');
         setLastSyncedTime(new Date().toLocaleTimeString('id-ID'));
         showToast(
@@ -965,6 +1064,20 @@ export default function App() {
                 isGoogleConnected={isGoogleConnected}
                 onConnectGoogle={handleConnectGoogle}
                 kodeKlasifikasiList={kodeKlasifikasiList}
+                onBatchUpdate={(newList) => {
+                  const syncedSuratKeluar = syncAllModulesToSuratKeluar(
+                    data.suratKeluar || [],
+                    newList,
+                    data.pembuatSurat || [],
+                    data.identitasSekolah
+                  );
+                  updateData({
+                    ...data,
+                    suratTugas: newList,
+                    suratKeluar: syncedSuratKeluar
+                  });
+                  showToast(`Berhasil menyelaraskan ${newList.length} data Surat Tugas Dinas!`, 'success');
+                }}
               />
             )}
 
@@ -986,6 +1099,20 @@ export default function App() {
                 isGoogleConnected={isGoogleConnected}
                 onConnectGoogle={handleConnectGoogle}
                 kodeKlasifikasiList={kodeKlasifikasiList}
+                onBatchUpdate={(newList) => {
+                  const syncedSuratKeluar = syncAllModulesToSuratKeluar(
+                    data.suratKeluar || [],
+                    data.suratTugas || [],
+                    newList,
+                    data.identitasSekolah
+                  );
+                  updateData({
+                    ...data,
+                    pembuatSurat: newList,
+                    suratKeluar: syncedSuratKeluar
+                  });
+                  showToast(`Berhasil menyelaraskan ${newList.length} data Pembuat Surat!`, 'success');
+                }}
               />
             )}
 

@@ -902,6 +902,47 @@ export const uploadDocumentAsPdfToDrive = async (
 };
 
 /**
+ * Fetch all files present in TATA USAHA/07_ARSIP_DOKUMEN_SURAT folder
+ */
+export const fetchArsipDokumenFiles = async (accessToken: string): Promise<GoogleDriveFile[]> => {
+  if (!accessToken) return [];
+  try {
+    const archiveFolderId = await findOrCreateArsipDokumenSuratFolder(accessToken);
+    const query = `'${archiveFolderId}' in parents and trashed = false`;
+    const params = new URLSearchParams({
+      q: query,
+      fields: 'files(id, name, mimeType, size, webViewLink, webContentLink, iconLink, createdTime, modifiedTime)',
+      orderBy: 'modifiedTime desc',
+      pageSize: '100',
+    });
+
+    const res = await fetch(`${DRIVE_API_URL}/files?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (res.status === 401) {
+      invalidateGoogleAuth();
+      return [];
+    }
+
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.files || []).map((file: any) => ({
+      ...file,
+      isFolder: file.mimeType === 'application/vnd.google-apps.folder',
+      size: file.size ? formatBytes(parseInt(file.size, 10)) : '-',
+    }));
+  } catch (error: any) {
+    if (error?.message?.includes('AUTH_EXPIRED') || error?.message?.includes('invalid authentication credentials')) {
+      invalidateGoogleAuth();
+      return [];
+    }
+    console.warn('Could not fetch files from TATA USAHA/07_ARSIP_DOKUMEN_SURAT folder:', error?.message || error);
+    return [];
+  }
+};
+
+/**
  * Find or Create the dedicated "TATA USAHA" folder in user's Google Drive root
  */
 export const findOrCreateTataUsahaFolder = async (
@@ -1086,6 +1127,14 @@ export const syncLiveDatabaseToTataUsahaFolder = async (
       }
     } else {
       await uploadFileToGoogleDrive(accessToken, blob, masterFileName, 'application/json', folderId);
+    }
+
+    // Also sync Surat Tugas and Pembuat Surat to their dedicated recap JSON files in 07_ARSIP_DOKUMEN_SURAT folder
+    try {
+      await saveSuratTugasDataToDrive(accessToken, dbState.suratTugas || []);
+      await savePembuatSuratDataToDrive(accessToken, dbState.pembuatSurat || []);
+    } catch (recapErr) {
+      console.warn('Non-blocking error syncing Surat Tugas / Pembuat Surat recaps:', recapErr);
     }
 
     // 3. Also write a human-readable quick summary file
@@ -2030,6 +2079,148 @@ export const loadBukuIndukDataFromDrive = async (
   }
 
   throw new Error('Berkas spreadsheet "BUKU_INDUK_SISWA_DAN_ALUMNI" ditemukan, tetapi tidak berisi data siswa yang valid pada sheet "BUKU INDUK SISWA".');
+};
+
+/**
+ * Save Surat Tugas list directly to Google Drive as JSON in TATA USAHA/07_ARSIP_DOKUMEN_SURAT
+ */
+export const saveSuratTugasDataToDrive = async (
+  accessToken: string,
+  suratTugasList: any[]
+): Promise<boolean> => {
+  if (!accessToken) return false;
+  try {
+    const archiveFolderId = await findOrCreateArsipDokumenSuratFolder(accessToken);
+    const fileName = 'REKAP_SURAT_TUGAS_DINAS.json';
+    const blob = new Blob([JSON.stringify(suratTugasList, null, 2)], { type: 'application/json' });
+
+    // Check if file exists
+    const checkQuery = `name = '${fileName}' and '${archiveFolderId}' in parents and trashed = false`;
+    const checkRes = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: checkQuery, fields: 'files(id)' }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    if (checkRes.ok) {
+      const checkData = await checkRes.json();
+      if (checkData.files && checkData.files.length > 0) {
+        const fileId = checkData.files[0].id;
+        return await updateFileInGoogleDrive(accessToken, fileId, blob, 'application/json');
+      }
+    }
+
+    await uploadFileToGoogleDrive(accessToken, blob, fileName, 'application/json', archiveFolderId);
+    return true;
+  } catch (error: any) {
+    console.warn('Error saving Surat Tugas to Google Drive:', error?.message || error);
+    return false;
+  }
+};
+
+/**
+ * Load Surat Tugas list directly from Google Drive JSON in TATA USAHA/07_ARSIP_DOKUMEN_SURAT
+ */
+export const loadSuratTugasDataFromDrive = async (
+  accessToken: string
+): Promise<any[] | null> => {
+  if (!accessToken) return null;
+  try {
+    const archiveFolderId = await findOrCreateArsipDokumenSuratFolder(accessToken);
+    const fileName = 'REKAP_SURAT_TUGAS_DINAS.json';
+    const checkQuery = `name = '${fileName}' and '${archiveFolderId}' in parents and trashed = false`;
+    const checkRes = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: checkQuery, fields: 'files(id)' }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    if (checkRes.ok) {
+      const checkData = await checkRes.json();
+      if (checkData.files && checkData.files.length > 0) {
+        const fileId = checkData.files[0].id;
+        const contentRes = await fetch(`${DRIVE_API_URL}/files/${fileId}?alt=media`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (contentRes.ok) {
+          return await contentRes.json();
+        }
+      }
+    }
+    return null;
+  } catch (error: any) {
+    console.warn('Error loading Surat Tugas from Google Drive:', error?.message || error);
+    return null;
+  }
+};
+
+/**
+ * Save Pembuat Surat list directly to Google Drive as JSON in TATA USAHA/07_ARSIP_DOKUMEN_SURAT
+ */
+export const savePembuatSuratDataToDrive = async (
+  accessToken: string,
+  pembuatSuratList: any[]
+): Promise<boolean> => {
+  if (!accessToken) return false;
+  try {
+    const archiveFolderId = await findOrCreateArsipDokumenSuratFolder(accessToken);
+    const fileName = 'REKAP_PEMBUAT_SURAT.json';
+    const blob = new Blob([JSON.stringify(pembuatSuratList, null, 2)], { type: 'application/json' });
+
+    // Check if file exists
+    const checkQuery = `name = '${fileName}' and '${archiveFolderId}' in parents and trashed = false`;
+    const checkRes = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: checkQuery, fields: 'files(id)' }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    if (checkRes.ok) {
+      const checkData = await checkRes.json();
+      if (checkData.files && checkData.files.length > 0) {
+        const fileId = checkData.files[0].id;
+        return await updateFileInGoogleDrive(accessToken, fileId, blob, 'application/json');
+      }
+    }
+
+    await uploadFileToGoogleDrive(accessToken, blob, fileName, 'application/json', archiveFolderId);
+    return true;
+  } catch (error: any) {
+    console.warn('Error saving Pembuat Surat to Google Drive:', error?.message || error);
+    return false;
+  }
+};
+
+/**
+ * Load Pembuat Surat list directly from Google Drive JSON in TATA USAHA/07_ARSIP_DOKUMEN_SURAT
+ */
+export const loadPembuatSuratDataFromDrive = async (
+  accessToken: string
+): Promise<any[] | null> => {
+  if (!accessToken) return null;
+  try {
+    const archiveFolderId = await findOrCreateArsipDokumenSuratFolder(accessToken);
+    const fileName = 'REKAP_PEMBUAT_SURAT.json';
+    const checkQuery = `name = '${fileName}' and '${archiveFolderId}' in parents and trashed = false`;
+    const checkRes = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: checkQuery, fields: 'files(id)' }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    if (checkRes.ok) {
+      const checkData = await checkRes.json();
+      if (checkData.files && checkData.files.length > 0) {
+        const fileId = checkData.files[0].id;
+        const contentRes = await fetch(`${DRIVE_API_URL}/files/${fileId}?alt=media`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (contentRes.ok) {
+          return await contentRes.json();
+        }
+      }
+    }
+    return null;
+  } catch (error: any) {
+    console.warn('Error loading Pembuat Surat from Google Drive:', error?.message || error);
+    return null;
+  }
 };
 
 /**

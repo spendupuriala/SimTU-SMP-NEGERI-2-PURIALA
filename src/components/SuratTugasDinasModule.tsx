@@ -26,6 +26,8 @@ import {
   FileSpreadsheet,
   Tag,
   BookOpen,
+  CloudDownload,
+  CloudUpload,
 } from 'lucide-react';
 import {
   SuratTugasDinas,
@@ -57,6 +59,9 @@ import {
   fetchSuratFolderFiles,
   uploadDocumentAsPdfToDrive,
   GoogleDriveFile,
+  fetchArsipDokumenFiles,
+  saveSuratTugasDataToDrive,
+  loadSuratTugasDataFromDrive,
 } from '../services/googleDrive';
 
 interface SuratTugasDinasModuleProps {
@@ -75,6 +80,7 @@ interface SuratTugasDinasModuleProps {
   isGoogleConnected?: boolean;
   onConnectGoogle?: () => void;
   kodeKlasifikasiList?: KodeKlasifikasiSurat[];
+  onBatchUpdate?: (newList: SuratTugasDinas[]) => void;
 }
 
 export const formatPTKDisplayName = (g: any): string => {
@@ -110,6 +116,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
   isGoogleConnected = false,
   onConnectGoogle,
   kodeKlasifikasiList = DEFAULT_KODE_KLASIFIKASI,
+  onBatchUpdate,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -128,6 +135,130 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
   const [isLoadingDrive, setIsLoadingDrive] = useState(false);
   const [isSavingToDrive, setIsSavingToDrive] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
+
+  // Google Drive Storage Sync States
+  const [isScanningDriveBerkas, setIsScanningDriveBerkas] = useState(false);
+  const [isPullingDrive, setIsPullingDrive] = useState(false);
+  const [isSyncingDrive, setIsSyncingDrive] = useState(false);
+  const [syncFeedback, setSyncFeedback] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
+
+  const handleAutoScanBerkas = async () => {
+    if (!googleToken || !isGoogleConnected) {
+      if (onConnectGoogle) onConnectGoogle();
+      return;
+    }
+
+    try {
+      setIsScanningDriveBerkas(true);
+      setSyncFeedback({ message: 'Sedang memindai folder TATA USAHA/07_ARSIP_DOKUMEN_SURAT...', type: 'info' });
+
+      const files = await fetchArsipDokumenFiles(googleToken);
+      
+      let matchedCount = 0;
+      const updatedList = tugasList.map((tugas) => {
+        const safeNo = (tugas.noSuratTugas || '').replace(/[/\\?%*:|"<>]/g, '_');
+        
+        // Find by exact file ID if we already have it, or by name match
+        const matchedFile = files.find(
+          (f) =>
+            f.id === tugas.driveFileId ||
+            f.name.toLowerCase() === `SPT_${safeNo}_${(tugas.personil[0]?.nama || '').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`.toLowerCase() ||
+            (safeNo && f.name.includes(safeNo))
+        );
+
+        if (matchedFile) {
+          matchedCount++;
+          return {
+            ...tugas,
+            statusDrive: 'Tersimpan' as const,
+            driveFileId: matchedFile.id,
+            driveWebViewLink: matchedFile.webViewLink,
+            drivePath: 'TATA USAHA/07_ARSIP_DOKUMEN_SURAT',
+            templateNama: 'Format Google Drive TATA USAHA/07_ARSIP_DOKUMEN_SURAT - Surat Tugas',
+          };
+        } else {
+          return {
+            ...tugas,
+            statusDrive: tugas.statusDrive === 'Tersimpan' ? 'Lokal Saja' as const : tugas.statusDrive,
+          };
+        }
+      });
+
+      if (onBatchUpdate) {
+        onBatchUpdate(updatedList);
+      }
+
+      setSyncFeedback({
+        message: `Pemindaian Berkas Selesai! Menemukan ${matchedCount} berkas fisik PDF yang cocok di Drive.`,
+        type: 'success',
+      });
+    } catch (err: any) {
+      console.warn('Scan berkas error:', err);
+      setSyncFeedback({ message: err?.message || 'Gagal memindai berkas di Google Drive.', type: 'error' });
+    } finally {
+      setIsScanningDriveBerkas(false);
+    }
+  };
+
+  const handlePullFromDrive = async () => {
+    if (!googleToken || !isGoogleConnected) {
+      if (onConnectGoogle) onConnectGoogle();
+      return;
+    }
+
+    try {
+      setIsPullingDrive(true);
+      setSyncFeedback({ message: 'Sedang menarik data dari Google Drive...', type: 'info' });
+
+      const data = await loadSuratTugasDataFromDrive(googleToken);
+      if (data && Array.isArray(data)) {
+        if (onBatchUpdate) {
+          onBatchUpdate(data);
+        }
+        setSyncFeedback({
+          message: `Berhasil menarik ${data.length} data Surat Tugas dari Google Drive!`,
+          type: 'success',
+        });
+      } else {
+        setSyncFeedback({
+          message: 'Berkas rekap Surat Tugas tidak ditemukan atau kosong di Google Drive.',
+          type: 'info',
+        });
+      }
+    } catch (err: any) {
+      console.error('Error pulling Surat Tugas from Drive:', err);
+      setSyncFeedback({ message: err?.message || 'Gagal menarik data dari Google Drive.', type: 'error' });
+    } finally {
+      setIsPullingDrive(false);
+    }
+  };
+
+  const handleSaveRekapToDrive = async () => {
+    if (!googleToken || !isGoogleConnected) {
+      if (onConnectGoogle) onConnectGoogle();
+      return;
+    }
+
+    try {
+      setIsSyncingDrive(true);
+      setSyncFeedback({ message: 'Sedang menyinkronkan data ke Google Drive...', type: 'info' });
+
+      const success = await saveSuratTugasDataToDrive(googleToken, tugasList);
+      if (success) {
+        setSyncFeedback({
+          message: 'Berhasil menyimpan seluruh data riwayat Surat Tugas ke Google Drive!',
+          type: 'success',
+        });
+      } else {
+        throw new Error('Gagal menulis berkas rekap ke Google Drive.');
+      }
+    } catch (err: any) {
+      console.error('Error saving Surat Tugas to Drive:', err);
+      setSyncFeedback({ message: err?.message || 'Gagal menyimpan data ke Google Drive.', type: 'error' });
+    } finally {
+      setIsSyncingDrive(false);
+    }
+  };
 
   const getNextNomorUrut = (): number => {
     const highest = getHighestNomorUrutFromLists(tugasList, suratKeluarList, pembuatSuratList, skKBMList, skTugasTambahanList);
@@ -527,6 +658,106 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
           </button>
         </div>
       </div>
+
+      {/* GOOGLE DRIVE STORAGE SYNC BANNER */}
+      <div className="bg-gradient-to-r from-teal-900 via-teal-800 to-slate-900 text-white rounded-2xl p-4 shadow-md border border-teal-700/50 flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="flex items-start sm:items-center gap-3">
+          <div className="p-2.5 bg-white/10 rounded-xl border border-white/20 backdrop-blur-xs shrink-0">
+            <Cloud className="w-5 h-5 text-teal-300" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-extrabold tracking-wide uppercase text-teal-200">
+                Google Drive Storage Sync
+              </span>
+              <span className="bg-teal-500/30 text-teal-200 text-[10px] font-mono px-2 py-0.5 rounded-full border border-teal-400/30">
+                Folder: TATA USAHA/07_ARSIP_DOKUMEN_SURAT
+              </span>
+              <span className="bg-white/10 text-white text-[10px] font-mono px-2 py-0.5 rounded-full">
+                File: "REKAP_SURAT_TUGAS_DINAS.json"
+              </span>
+            </div>
+            <p className="text-xs text-slate-300 mt-0.5">
+              Otomatis sinkronisasi, tarik, simpan data Surat Tugas Dinas & memverifikasi kelengkapan berkas fisik PDF di folder Drive.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          {isGoogleConnected ? (
+            <>
+              {/* Scan Berkas Drive Button */}
+              <button
+                type="button"
+                onClick={handleAutoScanBerkas}
+                disabled={isScanningDriveBerkas || isPullingDrive || isSyncingDrive}
+                className="bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold py-2 px-3 rounded-xl shadow-md transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                title="Pindai folder TATA USAHA/07_ARSIP_DOKUMEN_SURAT untuk sinkronisasi kelengkapan berkas surat fisik PDF"
+              >
+                <RefreshCw className={`w-4 h-4 ${isScanningDriveBerkas ? 'animate-spin' : ''}`} />
+                <span>{isScanningDriveBerkas ? 'Memindai Drive...' : 'Pindai Berkas Drive'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handlePullFromDrive}
+                disabled={isPullingDrive || isSyncingDrive || isScanningDriveBerkas}
+                className="bg-teal-700/80 hover:bg-teal-600 text-white text-xs font-bold py-2 px-3 rounded-xl border border-teal-500/50 shadow-xs transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                title="Tarik data Surat Tugas dari berkas rekap di Drive"
+              >
+                <CloudDownload className={`w-4 h-4 ${isPullingDrive ? 'animate-bounce' : ''}`} />
+                <span>{isPullingDrive ? 'Menarik...' : 'Tarik Data'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSaveRekapToDrive}
+                disabled={isSyncingDrive || isPullingDrive || isScanningDriveBerkas}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2 px-3.5 rounded-xl shadow-md transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                title="Simpan seluruh data riwayat Surat Tugas ke Google Drive"
+              >
+                <CloudUpload className={`w-4 h-4 ${isSyncingDrive ? 'animate-spin' : ''}`} />
+                <span>{isSyncingDrive ? 'Menyimpan...' : 'Simpan ke Drive'}</span>
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={onConnectGoogle}
+              className="bg-white hover:bg-slate-100 text-slate-900 text-xs font-bold py-2 px-4 rounded-xl shadow-md transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <Cloud className="w-4 h-4 text-teal-600" />
+              <span>Hubungkan Akun Google</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Sync feedback notification message inside the view */}
+      {syncFeedback && (
+        <div className={`p-3 rounded-xl text-xs flex items-center justify-between gap-2 border ${
+          syncFeedback.type === 'success'
+            ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+            : syncFeedback.type === 'error'
+            ? 'bg-rose-50 text-rose-800 border-rose-200'
+            : 'bg-sky-50 text-sky-800 border-sky-200'
+        }`}>
+          <div className="flex items-center gap-1.5">
+            {syncFeedback.type === 'error' ? (
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
+            ) : (
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
+            )}
+            <span className="font-semibold">{syncFeedback.message}</span>
+          </div>
+          <button
+            onClick={() => setSyncFeedback(null)}
+            className="text-slate-400 hover:text-slate-600 p-0.5"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Google Drive Master Template Banner Indicator */}
       <div className="bg-gradient-to-r from-sky-50 via-indigo-50 to-emerald-50 border border-sky-200 rounded-xl p-4 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
