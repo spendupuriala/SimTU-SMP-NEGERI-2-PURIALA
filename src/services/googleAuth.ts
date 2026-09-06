@@ -53,9 +53,8 @@ export const getValidStoredToken = (): string | null => {
     if (stored) {
       if (expiry) {
         const expTime = parseInt(expiry, 10);
-        // If it's within the artificial 55 minutes, or within a 2-hour grace period, keep using it
-        // We will let background verification handle any actual expirations smoothly
-        if (Number.isFinite(expTime) && Date.now() < expTime + 120 * 60 * 1000) {
+        // Strict enforce: token must be within the valid expiration time
+        if (Number.isFinite(expTime) && Date.now() < expTime) {
           return stored;
         }
       } else {
@@ -65,6 +64,15 @@ export const getValidStoredToken = (): string | null => {
     return null;
   } catch {
     return null;
+  }
+};
+
+// Check if a stored login session exists (even if token is expired)
+export const hasStoredSession = (): boolean => {
+  try {
+    return !!(localStorage.getItem(STORAGE_TOKEN_KEY) && localStorage.getItem(STORAGE_USER_KEY));
+  } catch {
+    return false;
   }
 };
 
@@ -146,6 +154,37 @@ export const invalidateGoogleAuth = () => {
   }
 };
 
+/**
+ * Perform silent token refresh in background
+ */
+export const silentRefreshGoogleToken = async (): Promise<string | null> => {
+  try {
+    const silentProvider = new GoogleAuthProvider();
+    GOOGLE_DRIVE_SCOPES.forEach((scope) => {
+      silentProvider.addScope(scope);
+    });
+    silentProvider.setCustomParameters({
+      prompt: 'none',
+    });
+
+    isSigningIn = true;
+    const result = await signInWithPopup(auth, silentProvider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    if (credential?.accessToken) {
+      cachedAccessToken = credential.accessToken;
+      persistToken(cachedAccessToken, result.user);
+      return cachedAccessToken;
+    }
+    return null;
+  } catch (err: any) {
+    console.info('Silent refresh was blocked or failed, clearing authentication cleanly:', err);
+    invalidateGoogleAuth();
+    return null;
+  } finally {
+    isSigningIn = false;
+  }
+};
+
 // Initialize auth state listener. Call this on app load.
 export const initAuth = (
   onAuthSuccess?: (user: User | any, token: string) => void,
@@ -167,7 +206,21 @@ export const initAuth = (
     // Asynchronously verify token with Google in background
     verifyGoogleAccessToken(validToken).then((isValid) => {
       if (!isValid) {
-        // Token is actually invalid/expired, invalidate cleanly
+        // Token is actually invalid/expired, try silent refresh
+        silentRefreshGoogleToken().then((newToken) => {
+          if (newToken && savedUser && onAuthSuccess) {
+            onAuthSuccess(savedUser, newToken);
+          }
+        });
+      }
+    });
+  } else if (hasStoredSession()) {
+    // Session exists but token is expired, attempt background silent refresh
+    const savedUser = getStoredGoogleUser();
+    silentRefreshGoogleToken().then((newToken) => {
+      if (newToken && savedUser && onAuthSuccess) {
+        onAuthSuccess(savedUser, newToken);
+      } else {
         invalidateGoogleAuth();
       }
     });
@@ -178,13 +231,24 @@ export const initAuth = (
     if (onAuthFailure) onAuthFailure();
   }
 
-  // Periodic automatic token validator (runs every 10 minutes to auto-renew expiry)
+  // Periodic automatic token validator and silent refresher (runs every 10 minutes)
   const validationInterval = setInterval(() => {
     const token = cachedAccessToken || getValidStoredToken();
+    const savedUser = getStoredGoogleUser();
     if (token) {
       verifyGoogleAccessToken(token).then((isValid) => {
         if (!isValid) {
-          invalidateGoogleAuth();
+          silentRefreshGoogleToken().then((newToken) => {
+            if (newToken && savedUser && onAuthSuccess) {
+              onAuthSuccess(savedUser, newToken);
+            }
+          });
+        }
+      });
+    } else if (hasStoredSession()) {
+      silentRefreshGoogleToken().then((newToken) => {
+        if (newToken && savedUser && onAuthSuccess) {
+          onAuthSuccess(savedUser, newToken);
         }
       });
     }
@@ -196,6 +260,12 @@ export const initAuth = (
       if (activeToken) {
         persistToken(activeToken, user);
         if (onAuthSuccess) onAuthSuccess(user, activeToken);
+      } else if (hasStoredSession()) {
+        silentRefreshGoogleToken().then((newToken) => {
+          if (newToken && onAuthSuccess) {
+            onAuthSuccess(user, newToken);
+          }
+        });
       } else if (!isSigningIn) {
         if (onAuthFailure) onAuthFailure();
       }
