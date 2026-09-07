@@ -871,7 +871,14 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
       const fileName = `${cleanJenis}_${cleanName}_SMPN2_PURIALA.pdf`;
 
       // Convert HTML to PDF blob
-      const pdfBlob = await html2pdf().from(htmlContent).outputPdf('blob');
+      const opt = {
+        margin: [20, 25, 20, 20] as [number, number, number, number], // top, left, bottom, right in mm (Atas: 20mm, Kiri: 25mm, Bawah: 20mm, Kanan: 20mm)
+        filename: fileName,
+        image: { type: 'jpeg' as const, quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+        jsPDF: { unit: 'mm', format: 'a4' as const, orientation: 'portrait' as const }
+      };
+      const pdfBlob = await html2pdf().set(opt).from(htmlContent).outputPdf('blob');
 
       const uploaded = await uploadDocumentAsPdfToDrive(googleToken, pdfBlob, fileName);
 

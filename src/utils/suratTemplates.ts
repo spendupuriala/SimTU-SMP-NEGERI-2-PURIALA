@@ -898,7 +898,7 @@ export function renderSuratDocumentHTML(surat: PembuatSuratRecord, sekolah: Iden
   <style>
     @page {
       size: A4 portrait;
-      margin: 15mm 20mm 15mm 20mm;
+      margin: 20mm 20mm 20mm 25mm; /* Atas (Top): 20mm, Kanan (Right): 20mm, Bawah (Bottom): 20mm, Kiri (Left): 25mm */
     }
     body {
       font-family: 'Times New Roman', Times, serif;
@@ -910,13 +910,23 @@ export function renderSuratDocumentHTML(surat: PembuatSuratRecord, sekolah: Iden
       padding: 0;
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
+      overflow: visible;
     }
     .page-container {
-      width: 100%;
-      max-width: 210mm;
+      width: 210mm; /* A4 Standard Width */
+      min-height: 297mm; /* A4 Standard Height */
       margin: 0 auto;
-      padding: 0;
+      padding: 2.5cm 2cm 2cm 2.5cm; /* Atas: 2.5cm, Kanan: 2cm, Bawah: 2cm, Kiri: 2.5cm */
       box-sizing: border-box;
+      background: #ffffff;
+      overflow: visible;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+    .kop-surat, .isi-surat, .ttd-area, p, table, td, div {
+      overflow: visible;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
     }
     @media print {
       body {
@@ -927,6 +937,10 @@ export function renderSuratDocumentHTML(surat: PembuatSuratRecord, sekolah: Iden
       .page-container {
         width: 100%;
         max-width: none;
+        padding: 0; /* Reset padding to let @page margin option handle the physical layout correctly */
+        margin: 0;
+        box-shadow: none;
+        overflow: visible;
       }
       .no-print {
         display: none !important;

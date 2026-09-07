@@ -182,11 +182,11 @@ export function generateSKKBMFullHtml(
   <style>
     @page {
       size: ${isLampiranOnly ? 'A4 landscape' : 'A4 portrait'};
-      margin: ${isLampiranOnly ? '1cm 1.2cm 1cm 1.2cm' : '1.5cm 1.5cm 1.5cm 1.5cm'};
+      margin: ${isLampiranOnly ? '1cm 1.2cm 1cm 1.2cm' : '20mm 20mm 20mm 25mm'}; /* Atas (Top): 20mm, Kanan (Right): 20mm, Bawah (Bottom): 20mm, Kiri (Left): 25mm */
     }
     @page skPortrait {
       size: A4 portrait;
-      margin: 1.5cm 1.5cm 1.5cm 1.5cm;
+      margin: 20mm 20mm 20mm 25mm; /* Atas (Top): 20mm, Kanan (Right): 20mm, Bawah (Bottom): 20mm, Kiri (Left): 25mm */
     }
     @page skLandscape {
       size: A4 landscape;
@@ -1337,7 +1337,7 @@ export function generateSKTugasTertentuFullHtml(
   <style>
     @page {
       size: A4 portrait;
-      margin: 14mm 16mm 14mm 16mm;
+      margin: 20mm 20mm 20mm 25mm; /* Atas (Top): 20mm, Kanan (Right): 20mm, Bawah (Bottom): 20mm, Kiri (Left): 25mm */
     }
     @page lampiran-page {
       size: A4 landscape;
@@ -1356,14 +1356,23 @@ export function generateSKTugasTertentuFullHtml(
       margin: 0;
       padding: 0;
       background: #fff;
+      overflow: visible;
     }
     .page-container {
-      width: 100%;
-      max-width: 210mm;
+      width: 210mm; /* A4 standard width */
+      min-height: 297mm; /* A4 standard height */
       margin: 0 auto;
-      padding: 16mm 18mm;
+      padding: 2.5cm 2cm 2cm 2.5cm; /* Atas: 2.5cm, Kanan: 2cm, Bawah: 2cm, Kiri: 2.5cm */
       box-sizing: border-box;
       background: #fff;
+      overflow: visible;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+    .page-container p, .page-container table, .page-container td, .page-container div, .page-container span {
+      overflow: visible;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
     }
     .lampiran-container {
       page: lampiran-page;
@@ -1374,6 +1383,20 @@ export function generateSKTugasTertentuFullHtml(
       padding: 12mm 15mm;
       box-sizing: border-box;
       background: #fff;
+    }
+    @media print {
+      body {
+        background: #fff;
+        overflow: visible;
+      }
+      .page-container {
+        width: 100%;
+        max-width: none;
+        padding: 0; /* Reset padding to let @page margin option handle the physical layout correctly */
+        margin: 0;
+        box-shadow: none;
+        overflow: visible;
+      }
     }
     @media screen {
       body {
@@ -1951,7 +1974,7 @@ export function generateSuratTugasFullHtml(
   <style>
     @page {
       size: A4 portrait;
-      margin: 1.2cm 1.5cm 1.2cm 1.5cm;
+      margin: 20mm 20mm 20mm 25mm; /* Atas (Top): 20mm, Kanan (Right): 20mm, Bawah (Bottom): 20mm, Kiri (Left): 25mm */
     }
     @media print {
       body {
@@ -1962,6 +1985,7 @@ export function generateSuratTugasFullHtml(
         font-family: 'Times New Roman', Times, serif;
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
+        overflow: visible;
       }
       .no-print {
         display: none !important;
@@ -1980,24 +2004,35 @@ export function generateSuratTugasFullHtml(
       background-color: #f1f5f9;
       padding: 0;
       margin: 0;
+      overflow: visible;
     }
     .document-page {
       background: #fff;
-      max-width: 210mm;
-      min-height: 297mm;
+      width: 210mm; /* A4 Standard Width */
+      min-height: 297mm; /* A4 Standard Height */
       margin: 0 auto 20px auto;
-      padding: 1.4cm 1.6cm 1.4cm 1.6cm;
+      padding: 2.5cm 2cm 2cm 2.5cm; /* Atas: 2.5cm, Kanan: 2cm, Bawah: 2cm, Kiri: 2.5cm */
       box-sizing: border-box;
       box-shadow: 0 4px 15px rgba(0,0,0,0.08);
       position: relative;
+      overflow: visible;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+    .document-page table, .document-page td, .document-page div, .document-page p, .document-page span {
+      overflow: visible;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
     }
     @media print {
       .document-page {
         box-shadow: none;
         margin: 0;
-        padding: 0;
-        max-width: 100%;
+        padding: 0; /* Reset padding to let @page margins handle the document borders cleanly in print */
+        width: 100%;
+        max-width: none;
         min-height: auto;
+        overflow: visible;
       }
     }
 
