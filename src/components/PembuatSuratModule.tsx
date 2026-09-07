@@ -64,6 +64,69 @@ import {
   loadPembuatSuratDataFromDrive,
 } from '../services/googleDrive';
 
+const parsePembuatSuratFileName = (fileName: string, createdTime?: string) => {
+  const nameWithoutExt = fileName.replace(/\.[^/.]+$/, "");
+  
+  // Replace underscores with spaces
+  const parts = nameWithoutExt.split('_');
+  
+  let jenisSuratNama = 'Surat Keterangan';
+  let subjekName = 'Siswa/Guru';
+  let noSurat = '';
+  let targetSubjek: 'siswa' | 'guru' = 'siswa';
+
+  // Try to extract a pattern of Nomor Surat
+  const numberMatch = nameWithoutExt.match(/\b\d+[\/\-]\d+[\/\-]\w+[\/\-]\d+\b/);
+  if (numberMatch) {
+    noSurat = numberMatch[0];
+  }
+
+  // Filter out SMPN2, PURIALA, etc.
+  const cleanParts = parts.filter(p => {
+    const lp = p.toLowerCase();
+    return lp !== 'smpn2' && lp !== 'puriala' && lp !== 'smpn' && lp !== 'smp' && lp !== 'negeri';
+  });
+
+  if (cleanParts.length >= 3) {
+    if (cleanParts[0].toLowerCase() === 'surat') {
+      const siswaIndex = cleanParts.findIndex(p => p.toLowerCase() === 'siswa');
+      const guruIndex = cleanParts.findIndex(p => p.toLowerCase() === 'guru');
+      
+      if (siswaIndex !== -1) {
+        jenisSuratNama = cleanParts.slice(0, siswaIndex + 1).join(' ');
+        subjekName = cleanParts.slice(siswaIndex + 1).join(' ');
+        targetSubjek = 'siswa';
+      } else if (guruIndex !== -1) {
+        jenisSuratNama = cleanParts.slice(0, guruIndex + 1).join(' ');
+        subjekName = cleanParts.slice(guruIndex + 1).join(' ');
+        targetSubjek = 'guru';
+      } else {
+        jenisSuratNama = cleanParts.slice(0, 2).join(' ');
+        subjekName = cleanParts.slice(2).join(' ');
+      }
+    } else {
+      subjekName = cleanParts.join(' ');
+    }
+  } else {
+    subjekName = cleanParts.join(' ');
+  }
+
+  const capitalizeWords = (str: string) => {
+    return str.replace(/\b\w/g, c => c.toUpperCase());
+  };
+
+  subjekName = capitalizeWords(subjekName.trim());
+  jenisSuratNama = capitalizeWords(jenisSuratNama.trim());
+
+  if (!noSurat) {
+    const year = createdTime ? new Date(createdTime).getFullYear() : new Date().getFullYear();
+    const prefix = targetSubjek === 'guru' ? '800' : '421.3';
+    noSurat = `${prefix}/052/SMPN.2/${year}`;
+  }
+
+  return { jenisSuratNama, subjekName, noSurat, targetSubjek };
+};
+
 interface PembuatSuratModuleProps {
   suratList?: PembuatSuratRecord[];
   suratKeluarList?: SuratKeluar[];
@@ -114,32 +177,54 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
   const [isSyncingDrive, setIsSyncingDrive] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
 
-  const handleAutoScanBerkas = async () => {
+  const syncPembuatSuratWithDrive = async () => {
     if (!googleToken || !isGoogleConnected) {
       if (onConnectGoogle) onConnectGoogle();
-      return;
+      return null;
     }
 
     try {
-      setIsScanningDriveBerkas(true);
-      setSyncFeedback({ message: 'Sedang memindai folder TATA USAHA/07_ARSIP_DOKUMEN_SURAT...', type: 'info' });
-
+      // 1. Fetch physical files in folder TATA USAHA/07_ARSIP_DOKUMEN_SURAT
       const files = await fetchArsipDokumenFiles(googleToken);
-      
-      let matchedCount = 0;
-      const updatedList = (suratList || []).map((surat) => {
+      const docFiles = files.filter(
+        (f) =>
+          !f.isFolder &&
+          f.name !== 'REKAP_PEMBUAT_SURAT.json' &&
+          f.name !== 'REKAP_SURAT_TUGAS_DINAS.json' &&
+          !f.name.toUpperCase().startsWith('SPT_') && // Exclude Surat Tugas files
+          (f.name.toLowerCase().endsWith('.pdf') ||
+            f.name.toLowerCase().endsWith('.docx') ||
+            f.name.toLowerCase().endsWith('.doc'))
+      );
+
+      // 2. Load rekap JSON data
+      const driveRekap = await loadPembuatSuratDataFromDrive(googleToken);
+      let baseList = driveRekap && Array.isArray(driveRekap) ? [...driveRekap] : [...(suratList || [])];
+      let updatedCount = 0;
+      let newlyCreatedCount = 0;
+
+      // Track matched file IDs to prevent duplicate record generation
+      const matchedFileIds = new Set<string>();
+
+      // 3. Match existing entries with physical files
+      let updatedList = baseList.map((surat) => {
         const safeNo = (surat.noSurat || '').replace(/[/\\?%*:|"<>]/g, '_');
-        
-        // Find by exact file ID if we already have it, or by name match
-        const matchedFile = files.find(
+        const cleanJenis = (surat.jenisSuratNama || '').replace(/[^a-zA-Z0-9]/g, '_');
+        const cleanName = (surat.subjekData?.nama || 'Dokumen').replace(/[^a-zA-Z0-9]/g, '_');
+
+        // Match by exact file ID, or by constructed name, or if name contains safeNo or subjek name
+        const matchedFile = docFiles.find(
           (f) =>
             f.id === surat.driveFileId ||
-            f.name.toLowerCase() === `SURAT_${safeNo}_${(surat.subjekData?.nama || 'Dokumen').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`.toLowerCase() ||
-            (safeNo && f.name.includes(safeNo))
+            f.name.toLowerCase() === `${cleanJenis}_${cleanName}_SMPN2_PURIALA.pdf`.toLowerCase() ||
+            f.name.toLowerCase() === `SURAT_${safeNo}_${cleanName}.pdf`.toLowerCase() ||
+            (safeNo && f.name.replace(/\.[^/.]+$/, "").toLowerCase().includes(safeNo.toLowerCase())) ||
+            (cleanName && f.name.replace(/\.[^/.]+$/, "").toLowerCase().includes(cleanName.toLowerCase()))
         );
 
         if (matchedFile) {
-          matchedCount++;
+          matchedFileIds.add(matchedFile.id);
+          updatedCount++;
           return {
             ...surat,
             statusDrive: 'Tersimpan' as const,
@@ -155,14 +240,95 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
         }
       });
 
+      // 4. For any physical document file NOT matched, parse and create new record (Langkah C)
+      for (const f of docFiles) {
+        if (matchedFileIds.has(f.id)) continue;
+
+        const parsed = parsePembuatSuratFileName(f.name, f.createdTime);
+
+        // Check if we already have this file or parsed nomor in our list to prevent duplicate rows
+        const exists = updatedList.some(
+          (item) =>
+            item.driveFileId === f.id ||
+            (item.noSurat && parsed.noSurat && item.noSurat.toLowerCase() === parsed.noSurat.toLowerCase())
+        );
+
+        if (!exists) {
+          const newRecord: PembuatSuratRecord = {
+            id: `drive-${f.id}`,
+            noSurat: parsed.noSurat,
+            kodeKlasifikasi: parsed.targetSubjek === 'guru' ? '800' : '421.3',
+            targetSubjek: parsed.targetSubjek,
+            jenisSuratId: 'drive-import',
+            jenisSuratNama: parsed.jenisSuratNama,
+            tanggalSurat: f.createdTime ? f.createdTime.split('T')[0] : new Date().toISOString().split('T')[0],
+            tempatTerbit: 'Unggulino',
+            perihal: parsed.jenisSuratNama,
+            subjekData: {
+              nama: parsed.subjekName,
+              nip: '',
+              kelas: '',
+              nisn: '',
+            },
+            detailSurat: {
+              keperluan: parsed.jenisSuratNama,
+            },
+            penandatangan: {
+              tipe: 'kepala_sekolah',
+              labelJabatan: 'Kepala Sekolah',
+              nama: identitasSekolah.namaKepalaSekolah || 'ADRIS, S.Pd.,M.Si',
+              nip: identitasSekolah.nipKepalaSekolah || '19710110 199412 1 0012',
+              pangkatGol: identitasSekolah.pangkatKepsek || 'Pembina, IV/a',
+            },
+            status: 'Terbit',
+            statusDrive: 'Tersimpan',
+            driveFileId: f.id,
+            driveWebViewLink: f.webViewLink,
+            createdAt: f.createdTime || new Date().toISOString(),
+            updatedAt: f.createdTime || new Date().toISOString(),
+          };
+          updatedList.push(newRecord);
+          newlyCreatedCount++;
+        }
+      }
+
+      // 5. Save the combined list back to REKAP_PEMBUAT_SURAT.json to make it Single Source of Truth
+      await savePembuatSuratDataToDrive(googleToken, updatedList);
+
+      // 6. Batch update local state to reflect combined list immediately
       if (onBatchUpdate) {
         onBatchUpdate(updatedList);
       }
 
-      setSyncFeedback({
-        message: `Pemindaian Berkas Selesai! Menemukan ${matchedCount} berkas fisik PDF yang cocok di Drive.`,
-        type: 'success',
-      });
+      return {
+        total: updatedList.length,
+        updated: updatedCount,
+        newAdded: newlyCreatedCount,
+        filesCount: docFiles.length,
+      };
+    } catch (error: any) {
+      console.error('Error in syncPembuatSuratWithDrive:', error);
+      throw error;
+    }
+  };
+
+  const handleAutoScanBerkas = async () => {
+    if (!googleToken || !isGoogleConnected) {
+      if (onConnectGoogle) onConnectGoogle();
+      return;
+    }
+
+    try {
+      setIsScanningDriveBerkas(true);
+      setSyncFeedback({ message: 'Sedang memindai dan menyinkronkan seluruh berkas fisik dari Google Drive...', type: 'info' });
+
+      const res = await syncPembuatSuratWithDrive();
+      if (res) {
+        setSyncFeedback({
+          message: `Pemindaian Berkas Selesai! Berhasil mensinkronkan ${res.filesCount} file fisik dari Drive. Menambahkan ${res.newAdded} riwayat baru otomatis ke tabel.`,
+          type: 'success',
+        });
+      }
     } catch (err: any) {
       console.warn('Scan berkas error:', err);
       setSyncFeedback({ message: err?.message || 'Gagal memindai berkas di Google Drive.', type: 'error' });
@@ -179,21 +345,13 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
 
     try {
       setIsPullingDrive(true);
-      setSyncFeedback({ message: 'Sedang menarik data dari Google Drive...', type: 'info' });
+      setSyncFeedback({ message: 'Sedang menarik dan menggabungkan data dari Google Drive...', type: 'info' });
 
-      const data = await loadPembuatSuratDataFromDrive(googleToken);
-      if (data && Array.isArray(data)) {
-        if (onBatchUpdate) {
-          onBatchUpdate(data);
-        }
+      const res = await syncPembuatSuratWithDrive();
+      if (res) {
         setSyncFeedback({
-          message: `Berhasil menarik ${data.length} data Pembuat Surat dari Google Drive!`,
+          message: `Berhasil menarik data! Sekarang total ada ${res.total} riwayat surat di aplikasi (Menemukan ${res.filesCount} file fisik dan menambah ${res.newAdded} riwayat baru otomatis).`,
           type: 'success',
-        });
-      } else {
-        setSyncFeedback({
-          message: 'Berkas rekap Pembuat Surat tidak ditemukan atau kosong di Google Drive.',
-          type: 'info',
         });
       }
     } catch (err: any) {

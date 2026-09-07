@@ -158,31 +158,14 @@ export const invalidateGoogleAuth = () => {
  * Perform silent token refresh in background
  */
 export const silentRefreshGoogleToken = async (): Promise<string | null> => {
-  try {
-    const silentProvider = new GoogleAuthProvider();
-    GOOGLE_DRIVE_SCOPES.forEach((scope) => {
-      silentProvider.addScope(scope);
-    });
-    silentProvider.setCustomParameters({
-      prompt: 'none',
-    });
-
-    isSigningIn = true;
-    const result = await signInWithPopup(auth, silentProvider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (credential?.accessToken) {
-      cachedAccessToken = credential.accessToken;
-      persistToken(cachedAccessToken, result.user);
-      return cachedAccessToken;
-    }
-    return null;
-  } catch (err: any) {
-    console.info('Silent refresh was blocked or failed, clearing authentication cleanly:', err);
-    invalidateGoogleAuth();
-    return null;
-  } finally {
-    isSigningIn = false;
-  }
+  // To avoid the fatal Firebase Auth error "INTERNAL ASSERTION FAILED: Pending promise was never set"
+  // which occurs when signInWithPopup is called programmatically without a direct user click event
+  // (causing the browser to block the window, leading to internal desynchronization),
+  // we do not call signInWithPopup here. Instead, we gracefully invalidate the expired session
+  // and prompt the user to log in again with a clean user gesture.
+  console.info('Programmatic silent refresh bypassed to prevent browser popup block and internal desynchronization.');
+  invalidateGoogleAuth();
+  return null;
 };
 
 // Initialize auth state listener. Call this on app load.

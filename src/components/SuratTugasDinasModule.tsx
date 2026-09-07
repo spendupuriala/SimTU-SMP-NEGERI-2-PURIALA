@@ -64,6 +64,50 @@ import {
   loadSuratTugasDataFromDrive,
 } from '../services/googleDrive';
 
+const parseSuratTugasFileName = (fileName: string, createdTime?: string) => {
+  const nameWithoutExt = fileName.replace(/\.[^/.]+$/, "");
+  
+  let noSuratTugas = '';
+  let personilName = 'Nama Pegawai';
+
+  if (nameWithoutExt.toUpperCase().startsWith('SPT_')) {
+    const cleanName = nameWithoutExt.substring(4); // remove 'SPT_'
+    const segments = cleanName.split('_');
+    
+    // Check for SMPN or school codes in segments
+    const smpnIndex = segments.findIndex(s => s.toLowerCase().includes('smpn') || s.toLowerCase().includes('puriala'));
+    if (smpnIndex !== -1 && smpnIndex < segments.length) {
+      const numSegments = segments.slice(0, smpnIndex + 2);
+      noSuratTugas = numSegments.join('/');
+      personilName = segments.slice(smpnIndex + 2).join(' ');
+    } else if (segments.length >= 3) {
+      noSuratTugas = segments.slice(0, 2).join('/');
+      personilName = segments.slice(2).join(' ');
+    } else {
+      personilName = cleanName;
+    }
+  } else {
+    personilName = nameWithoutExt;
+  }
+
+  // Clean personilName
+  personilName = personilName.replace(/_/g, ' ').trim();
+  const capitalizeWords = (str: string) => {
+    return str.replace(/\b\w/g, c => c.toUpperCase());
+  };
+  personilName = capitalizeWords(personilName);
+
+  if (!noSuratTugas) {
+    const year = createdTime ? new Date(createdTime).getFullYear() : new Date().getFullYear();
+    noSuratTugas = `090/052/SMPN.2/${year}`;
+  }
+
+  // Restore dynamic separator characters if needed
+  noSuratTugas = noSuratTugas.replace(/_/g, '/').replace(/-/g, '/');
+
+  return { noSuratTugas, personilName };
+};
+
 interface SuratTugasDinasModuleProps {
   tugasList: SuratTugasDinas[];
   suratKeluarList?: SuratKeluar[];
@@ -142,6 +186,136 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
   const [isSyncingDrive, setIsSyncingDrive] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
 
+  const syncSuratTugasWithDrive = async () => {
+    if (!googleToken || !isGoogleConnected) {
+      if (onConnectGoogle) onConnectGoogle();
+      return null;
+    }
+
+    try {
+      // Step 1: Scan all physical files in TATA USAHA/07_ARSIP_DOKUMEN_SURAT
+      const files = await fetchArsipDokumenFiles(googleToken);
+      const documentFiles = files.filter(
+        (f) =>
+          !f.isFolder &&
+          f.name !== 'REKAP_SURAT_TUGAS_DINAS.json' &&
+          f.name !== 'REKAP_PEMBUAT_SURAT.json' &&
+          (f.name.toLowerCase().endsWith('.pdf') ||
+            f.name.toLowerCase().endsWith('.docx') ||
+            f.name.toLowerCase().endsWith('.doc'))
+      );
+
+      // Step 2: Load the rekap JSON file
+      const rekapData = await loadSuratTugasDataFromDrive(googleToken);
+      
+      // Use rekapData as base list. If empty, fall back to current tugasList
+      let baseList: SuratTugasDinas[] = [];
+      if (rekapData && Array.isArray(rekapData)) {
+        baseList = [...rekapData];
+      } else {
+        baseList = [...tugasList];
+      }
+
+      // Track matched file IDs
+      const matchedFileIds = new Set<string>();
+
+      // Step 3: Match existing rekap entries with physical files
+      let updatedList: SuratTugasDinas[] = baseList.map((tugas): SuratTugasDinas => {
+        const safeNo = (tugas.noSuratTugas || '').replace(/[/\\?%*:|"<>]/g, '_');
+
+        // Match by exact file ID, or by constructed name, or if name contains safeNo
+        const matchedFile = documentFiles.find(
+          (f) =>
+            f.id === tugas.driveFileId ||
+            f.name.toLowerCase() === `SPT_${safeNo}_${(tugas.personil[0]?.nama || '').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`.toLowerCase() ||
+            (safeNo && f.name.includes(safeNo))
+        );
+
+        if (matchedFile) {
+          matchedFileIds.add(matchedFile.id);
+          return {
+            ...tugas,
+            statusDrive: 'Tersimpan',
+            driveFileId: matchedFile.id,
+            driveWebViewLink: matchedFile.webViewLink,
+            drivePath: 'TATA USAHA/07_ARSIP_DOKUMEN_SURAT',
+          } as SuratTugasDinas;
+        } else {
+          return {
+            ...tugas,
+            statusDrive: tugas.statusDrive === 'Tersimpan' ? 'Lokal Saja' : tugas.statusDrive,
+          } as SuratTugasDinas;
+        }
+      });
+
+      // Step 4: For any document file NOT matched, create a new record automatically (Langkah C)
+      let newCount = 0;
+      for (const file of documentFiles) {
+        if (matchedFileIds.has(file.id)) continue;
+
+        // Extract metadata from file name using robust parser
+        const parsed = parseSuratTugasFileName(file.name, file.createdTime);
+        const parsedNoSurat = parsed.noSuratTugas;
+        const parsedNamaPersonil = parsed.personilName;
+
+        // Check if we already have this nomor surat in updatedList to prevent duplication
+        const exists = updatedList.some(
+          (item) =>
+            (item.noSuratTugas && item.noSuratTugas.toLowerCase() === parsedNoSurat.toLowerCase()) ||
+            item.driveFileId === file.id
+        );
+
+        if (!exists) {
+          const newTugas: SuratTugasDinas = {
+            id: `DRIVE-${file.id}`,
+            noSuratTugas: parsedNoSurat,
+            noSPPD: '',
+            kodeKlasifikasi: '090',
+            dasarPenugasan: 'Sistem Deteksi Otomatis Berkas Google Drive',
+            personil: [{
+              nama: parsedNamaPersonil,
+              nip: '-',
+              pangkatGol: '-',
+              jabatan: 'Guru/Staf'
+            }],
+            maksudTugas: `Perjalanan Dinas Terkait: ${parsedNoSurat}`,
+            tempatTujuan: 'Sesuai Dokumen',
+            tanggalBerangkat: file.createdTime ? file.createdTime.split('T')[0] : new Date().toISOString().split('T')[0],
+            tanggalKembali: file.createdTime ? file.createdTime.split('T')[0] : new Date().toISOString().split('T')[0],
+            lamaHari: 1,
+            alatAngkut: 'Kendaraan Umum',
+            bebanAnggaran: 'Dana BOS SMPN 2 Puriala',
+            status: 'Terbit',
+            tanggalSurat: file.createdTime ? file.createdTime.split('T')[0] : new Date().toISOString().split('T')[0],
+            statusDrive: 'Tersimpan',
+            driveFileId: file.id,
+            driveWebViewLink: file.webViewLink,
+            drivePath: 'TATA USAHA/07_ARSIP_DOKUMEN_SURAT',
+          };
+          updatedList.push(newTugas);
+          newCount++;
+        }
+      }
+
+      // Step 5: Save the combined list back to REKAP_SURAT_TUGAS_DINAS.json to make it Single Source of Truth
+      await saveSuratTugasDataToDrive(googleToken, updatedList);
+
+      // Step 6: Batch update the local state to show results immediately
+      if (onBatchUpdate) {
+        onBatchUpdate(updatedList);
+      }
+
+      return {
+        total: updatedList.length,
+        newAdded: newCount,
+        filesCount: documentFiles.length,
+      };
+    } catch (error: any) {
+      console.error('Error in syncSuratTugasWithDrive:', error);
+      throw error;
+    }
+  };
+
   const handleAutoScanBerkas = async () => {
     if (!googleToken || !isGoogleConnected) {
       if (onConnectGoogle) onConnectGoogle();
@@ -150,48 +324,15 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
 
     try {
       setIsScanningDriveBerkas(true);
-      setSyncFeedback({ message: 'Sedang memindai folder TATA USAHA/07_ARSIP_DOKUMEN_SURAT...', type: 'info' });
+      setSyncFeedback({ message: 'Sedang memindai dan menyinkronkan seluruh berkas fisik dari Google Drive...', type: 'info' });
 
-      const files = await fetchArsipDokumenFiles(googleToken);
-      
-      let matchedCount = 0;
-      const updatedList = tugasList.map((tugas) => {
-        const safeNo = (tugas.noSuratTugas || '').replace(/[/\\?%*:|"<>]/g, '_');
-        
-        // Find by exact file ID if we already have it, or by name match
-        const matchedFile = files.find(
-          (f) =>
-            f.id === tugas.driveFileId ||
-            f.name.toLowerCase() === `SPT_${safeNo}_${(tugas.personil[0]?.nama || '').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`.toLowerCase() ||
-            (safeNo && f.name.includes(safeNo))
-        );
-
-        if (matchedFile) {
-          matchedCount++;
-          return {
-            ...tugas,
-            statusDrive: 'Tersimpan' as const,
-            driveFileId: matchedFile.id,
-            driveWebViewLink: matchedFile.webViewLink,
-            drivePath: 'TATA USAHA/07_ARSIP_DOKUMEN_SURAT',
-            templateNama: 'Format Google Drive TATA USAHA/07_ARSIP_DOKUMEN_SURAT - Surat Tugas',
-          };
-        } else {
-          return {
-            ...tugas,
-            statusDrive: tugas.statusDrive === 'Tersimpan' ? 'Lokal Saja' as const : tugas.statusDrive,
-          };
-        }
-      });
-
-      if (onBatchUpdate) {
-        onBatchUpdate(updatedList);
+      const res = await syncSuratTugasWithDrive();
+      if (res) {
+        setSyncFeedback({
+          message: `Pemindaian Berkas Selesai! Berhasil mensinkronkan ${res.filesCount} file fisik dari Drive. Menambahkan ${res.newAdded} riwayat baru otomatis ke tabel.`,
+          type: 'success',
+        });
       }
-
-      setSyncFeedback({
-        message: `Pemindaian Berkas Selesai! Menemukan ${matchedCount} berkas fisik PDF yang cocok di Drive.`,
-        type: 'success',
-      });
     } catch (err: any) {
       console.warn('Scan berkas error:', err);
       setSyncFeedback({ message: err?.message || 'Gagal memindai berkas di Google Drive.', type: 'error' });
@@ -208,21 +349,13 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
 
     try {
       setIsPullingDrive(true);
-      setSyncFeedback({ message: 'Sedang menarik data dari Google Drive...', type: 'info' });
+      setSyncFeedback({ message: 'Sedang menarik dan menggabungkan data dari Google Drive...', type: 'info' });
 
-      const data = await loadSuratTugasDataFromDrive(googleToken);
-      if (data && Array.isArray(data)) {
-        if (onBatchUpdate) {
-          onBatchUpdate(data);
-        }
+      const res = await syncSuratTugasWithDrive();
+      if (res) {
         setSyncFeedback({
-          message: `Berhasil menarik ${data.length} data Surat Tugas dari Google Drive!`,
+          message: `Berhasil menarik data! Sekarang total ada ${res.total} riwayat Surat Tugas di aplikasi (Menemukan ${res.filesCount} file fisik dan menambah ${res.newAdded} riwayat baru otomatis).`,
           type: 'success',
-        });
-      } else {
-        setSyncFeedback({
-          message: 'Berkas rekap Surat Tugas tidak ditemukan atau kosong di Google Drive.',
-          type: 'info',
         });
       }
     } catch (err: any) {
