@@ -144,6 +144,53 @@ export interface SKTugasTambahan {
   driveWebViewLink?: string;
 }
 
+export type JabatanPanitiaASTS =
+  | 'Penanggung Jawab'
+  | 'Ketua'
+  | 'Sekretaris'
+  | 'Bendahara'
+  | 'Perlengkapan'
+  | 'Penggandaan'
+  | 'Pengepakan'
+  | 'Konsumsi'
+  | 'Anggota'
+  | string;
+
+export interface SKPanitiaASTSMember {
+  id: string;
+  nama: string;
+  nip: string;
+  nuptk?: string;
+  pangkatGol?: string;
+  jabatanDinas: string; // misal: Kepala Sekolah, Guru Madya, Staf TU
+  jabatanPanitia: JabatanPanitiaASTS;
+  uraianTugas: string;
+}
+
+export interface SKPanitiaASTS {
+  id: string;
+  noSK: string; // Format: [Kode Klasifikasi]/[Nomor]/SMP-02/PRL/[Bulan]/[Tahun]
+  kodeKlasifikasi?: string; // misal: 400.3.12.2
+  nomorUrut?: number;
+  tahunAjaran: string; // misal: 2026/2027
+  semester: 'Ganjil' | 'Genap';
+  tentang: string;
+  tanggalSK: string; // misal: 2026-09-14
+  tempatPenetapan: string; // Unggulino
+  tanggalPelaksanaan?: string; // misal: 22 s.d 27 September 2026
+  menimbang: string[];
+  mengingat: string[];
+  memperhatikan: string[];
+  susunanPanitia: SKPanitiaASTSMember[];
+  statusDrive?: 'Tersimpan' | 'Menunggu Sync' | 'Lokal Saja';
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  templateNama?: string; // 'SK Panitia Asesmen Tengah Semester 2026-2027'
+  drivePath?: string;
+  tercatatDiAgenda?: boolean;
+  agendaSuratId?: string;
+}
+
 export interface PersonilTugas {
   nama: string;
   nip: string;
@@ -418,6 +465,7 @@ export interface DatabaseState {
   suratKeluar: SuratKeluar[];
   skKBM: SKKBM[];
   skTugasTambahan: SKTugasTambahan[];
+  skPanitiaASTS?: SKPanitiaASTS[];
   suratTugas: SuratTugasDinas[];
   pembuatSurat?: PembuatSuratRecord[];
   siswa: Siswa[];
@@ -459,6 +507,7 @@ export type ActiveTab =
   | 'buku-agenda'
   | 'sk-kbm'
   | 'sk-tugas-tambahan'
+  | 'sk-panitia-asts'
   | 'surat-tugas'
   | 'surat-tugas-dinas'
   | 'pembuat-surat'

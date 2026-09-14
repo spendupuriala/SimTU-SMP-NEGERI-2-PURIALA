@@ -692,6 +692,193 @@ export const findSuratTugasTemplateInDrive = async (accessToken: string): Promis
 };
 
 /**
+ * Find master template file "SK Panitia Asesmen Tengah Semester 2026-2027" in Google Drive.
+ * STRICT DATA FLOW RULE (READ-ONLY):
+ * ONLY reads and checks file presence and metadata from Google Drive.
+ * DILARANG MENIMPA, MENGUBAH, ATAU MENGIRIM DATA BARU ke Google Drive/Sheets saat sinkronisasi.
+ */
+export const findSKPanitiaASTSTemplateInDrive = async (
+  accessToken: string
+): Promise<{ file: GoogleDriveFile | null; path: string; status: 'found' | 'not_found' | 'error'; message: string }> => {
+  if (!accessToken) {
+    return { file: null, path: 'Offline / Belum Terhubung', status: 'not_found', message: 'Token Google Drive belum tersedia.' };
+  }
+
+  try {
+    // 1. Search in TATA USAHA/SK folder first
+    let skFolderId: string | null = null;
+    try {
+      skFolderId = await findOrCreateSKFolder(accessToken);
+    } catch {
+      skFolderId = null;
+    }
+
+    if (skFolderId) {
+      const queryInSK = `'${skFolderId}' in parents and (name contains 'SK Panitia Asesmen Tengah Semester' or name contains 'Panitia Asesmen Tengah Semester' or name contains 'SK Panitia ASTS' or name contains 'ASTS') and trashed = false`;
+      const resInSK = await fetch(
+        `${DRIVE_API_URL}/files?${new URLSearchParams({
+          q: queryInSK,
+          fields: 'files(id, name, mimeType, size, webViewLink, webContentLink, iconLink, modifiedTime, createdTime)',
+          pageSize: '10',
+        }).toString()}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+
+      if (resInSK.ok) {
+        const dataInSK = await resInSK.json();
+        if (dataInSK.files && dataInSK.files.length > 0) {
+          const found = dataInSK.files[0];
+          return {
+            file: {
+              ...found,
+              isFolder: found.mimeType === 'application/vnd.google-apps.folder',
+              size: found.size ? formatBytes(parseInt(found.size, 10)) : '-',
+            },
+            path: 'TATA USAHA/SK',
+            status: 'found',
+            message: `Templat resmi "${found.name}" ditemukan di folder TATA USAHA/SK.`,
+          };
+        }
+      }
+    }
+
+    // 2. Global search across Drive for "SK Panitia Asesmen Tengah Semester 2026-2027"
+    const queryGlobal = `(name contains 'SK Panitia Asesmen Tengah Semester' or name = 'SK Panitia Asesmen Tengah Semester 2026-2027' or name contains 'Panitia ASTS') and trashed = false`;
+    const resGlobal = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({
+        q: queryGlobal,
+        fields: 'files(id, name, mimeType, size, webViewLink, webContentLink, iconLink, modifiedTime, createdTime, parents)',
+        pageSize: '10',
+      }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    if (resGlobal.ok) {
+      const dataGlobal = await resGlobal.json();
+      if (dataGlobal.files && dataGlobal.files.length > 0) {
+        const found = dataGlobal.files[0];
+        return {
+          file: {
+            ...found,
+            isFolder: found.mimeType === 'application/vnd.google-apps.folder',
+            size: found.size ? formatBytes(parseInt(found.size, 10)) : '-',
+          },
+          path: 'Google Drive Utama',
+          status: 'found',
+          message: `Templat resmi "${found.name}" ditemukan di Google Drive.`,
+        };
+      }
+    }
+
+    return {
+      file: null,
+      path: 'TATA USAHA/SK',
+      status: 'not_found',
+      message: 'Templat "SK Panitia Asesmen Tengah Semester 2026-2027" belum ditemukan di Drive. Menggunakan templat standar sistem terverifikasi.',
+    };
+  } catch (error: any) {
+    console.warn('Error reading SK Panitia ASTS template from Drive:', error);
+    return {
+      file: null,
+      path: 'TATA USAHA/SK',
+      status: 'error',
+      message: `Gagal membaca templat dari Drive: ${error?.message || error}`,
+    };
+  }
+};
+
+/**
+ * Upload or Overwrite an SK Panitia ASTS document directly in Google Drive folder TATA USAHA/SK.
+ * ATURAN ALUR DATA:
+ * Jika file sudah ada di folder / drive, jangan membuat file baru tetapi menimpa file yang sudah ada.
+ */
+export const uploadSKPanitiaASTSDocumentToDrive = async (
+  accessToken: string,
+  fileBlob: Blob,
+  fileName: string = 'SK Panitia Asesmen Tengah Semester 2026-2027.html',
+  mimeType: string = 'text/html',
+  existingFileId?: string | null
+): Promise<GoogleDriveFile> => {
+  const skFolderId = await findOrCreateSKFolder(accessToken);
+
+  // 1. Jika existingFileId ada, langsung timpa konten file yang sudah ada
+  if (existingFileId) {
+    try {
+      const checkRes = await fetch(`${DRIVE_API_URL}/files/${existingFileId}?fields=id,name,webViewLink,trashed`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (checkRes.ok) {
+        const fileInfo = await checkRes.json();
+        if (!fileInfo.trashed) {
+          const updated = await updateFileInGoogleDrive(accessToken, existingFileId, fileBlob, mimeType);
+          if (updated) {
+            // Update nama file jika berbeda
+            if (fileInfo.name !== fileName) {
+              await fetch(`${DRIVE_API_URL}/files/${existingFileId}`, {
+                method: 'PATCH',
+                headers: {
+                  Authorization: `Bearer ${accessToken}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ name: fileName }),
+              });
+            }
+            return {
+              id: existingFileId,
+              name: fileName,
+              mimeType,
+              webViewLink: fileInfo.webViewLink || `https://drive.google.com/file/d/${existingFileId}/view`,
+            };
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Gagal menimpa via existingFileId, mencari file berdasarkan nama di folder...', err);
+    }
+  }
+
+  // 2. Cari apakah file dengan nama serupa sudah ada di folder TATA USAHA/SK
+  try {
+    const escapedName = fileName.replace(/'/g, "\\'");
+    const query = `(name = '${escapedName}' or name contains 'SK Panitia Asesmen Tengah Semester') and '${skFolderId}' in parents and trashed = false`;
+    const searchRes = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: query, fields: 'files(id, name, webViewLink)' }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (searchRes.ok) {
+      const searchData = await searchRes.json();
+      if (searchData.files && searchData.files.length > 0) {
+        const targetFile = searchData.files[0];
+        const updated = await updateFileInGoogleDrive(accessToken, targetFile.id, fileBlob, mimeType);
+        if (updated) {
+          if (targetFile.name !== fileName) {
+            await fetch(`${DRIVE_API_URL}/files/${targetFile.id}`, {
+              method: 'PATCH',
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ name: fileName }),
+            });
+          }
+          return {
+            id: targetFile.id,
+            name: fileName,
+            mimeType,
+            webViewLink: targetFile.webViewLink || `https://drive.google.com/file/d/${targetFile.id}/view`,
+          };
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Gagal mencari file di folder SK:', err);
+  }
+
+  // 3. Hanya buat file baru jika belum ada sama sekali di Google Drive
+  return uploadFileToGoogleDrive(accessToken, fileBlob, fileName, mimeType, skFolderId);
+};
+
+/**
  * Upload a Surat Tugas / SPT document directly to Google Drive folder TATA USAHA/SURAT
  */
 export const uploadSuratTugasDocumentToDrive = async (

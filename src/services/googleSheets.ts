@@ -2606,6 +2606,153 @@ export const findOrCreateSuratKeluarAgendaSheet = async (
 };
 
 /**
+ * Record an SK Panitia ASTS / UTS directly to Google Sheets "BUKU_AGENDA_SURAT_KELUAR".
+ * EXPLICIT DATA FLOW RULE:
+ * ONLY invoked when user clicks "Kirim ke Buku Agenda Surat Keluar" / "Kirim Data"!
+ * Dilarang dijalankan secara otomatis saat sinkronisasi/baca templat.
+ */
+export const recordSKPanitiaASTSToAgendaSuratKeluar = async (
+  accessToken: string,
+  sk: {
+    id?: string;
+    noSK: string;
+    nomorUrut?: number;
+    tanggalSK: string;
+    tentang: string;
+    kodeKlasifikasi?: string;
+    existingSuratId?: string;
+    isResend?: boolean;
+  },
+  identitas: {
+    namaKepalaSekolah?: string;
+  }
+): Promise<{ spreadsheetId: string; webViewLink: string; suratRecord: SuratKeluar }> => {
+  const agendaSheet = await findOrCreateSuratKeluarAgendaSheet(accessToken);
+  let existingSuratList: SuratKeluar[] = [];
+  try {
+    const rawRows = await readSheetData(accessToken, agendaSheet.spreadsheetId, '2026');
+    existingSuratList = parseSuratKeluarFromRows(rawRows).suratList;
+  } catch {
+    existingSuratList = [];
+  }
+
+  // ATURAN AGENDA: Jika klik tercatat di Agenda (kirim Ulang), jangan membuat nomor atau baris baru
+  // melainkan menimpa/mengganti baris dan nomor yang sudah ada untuk perbaikannya.
+  let existingIndex = -1;
+
+  // 1. Cek berdasarkan existingSuratId
+  if (sk.existingSuratId) {
+    existingIndex = existingSuratList.findIndex((s) => s.id === sk.existingSuratId);
+  }
+
+  // 2. Cek berdasarkan ID pola SK Panitia ASTS
+  if (existingIndex === -1) {
+    existingIndex = existingSuratList.findIndex((s) => s.id && s.id.startsWith('sk-panitia-asts'));
+  }
+
+  // 3. Cek berdasarkan nomor surat sama persis
+  if (existingIndex === -1 && sk.noSK) {
+    existingIndex = existingSuratList.findIndex((s) => s.noSurat === sk.noSK && s.noSurat !== '');
+  }
+
+  // 4. Cek berdasarkan nomor urut agenda dan perihal ASTS / Panitia
+  if (existingIndex === -1 && sk.nomorUrut) {
+    existingIndex = existingSuratList.findIndex((s) => {
+      const matchAgenda = s.noAgenda?.match(/^(\d+)/);
+      const agendaNum = matchAgenda ? parseInt(matchAgenda[1], 10) : null;
+      const isASTS =
+        (s.perihal && s.perihal.toLowerCase().includes('panitia') && (s.perihal.toLowerCase().includes('asts') || s.perihal.toLowerCase().includes('uts'))) ||
+        (s.noAgenda && s.noAgenda.includes('SK-ASTS'));
+      return isASTS && agendaNum === sk.nomorUrut;
+    });
+  }
+
+  // 5. Cek jika isResend aktif, cari baris agenda yang perihalnya mencakup ASTS / Ujian Tengah Semester
+  if (existingIndex === -1 && sk.isResend) {
+    existingIndex = existingSuratList.findIndex((s) => {
+      const perihalLower = (s.perihal || '').toLowerCase();
+      return (
+        (perihalLower.includes('panitia') && (perihalLower.includes('asesmen tengah semester') || perihalLower.includes('asts') || perihalLower.includes('uts'))) ||
+        (s.noAgenda && s.noAgenda.includes('SK-ASTS'))
+      );
+    });
+  }
+
+  // Tentukan nomor urut agenda:
+  // Jika menimpa data yang sudah ada, pertahankan nomor yang sudah ada agar tidak bergeser!
+  let safeNomor = sk.nomorUrut;
+  if (existingIndex !== -1) {
+    const existingRec = existingSuratList[existingIndex];
+    const matchAgenda = existingRec.noAgenda?.match(/^(\d+)/);
+    if (matchAgenda) {
+      safeNomor = parseInt(matchAgenda[1], 10);
+    }
+  }
+
+  if (!safeNomor) {
+    let maxNum = 0;
+    for (const s of existingSuratList) {
+      const m = s.noAgenda?.match(/^(\d+)/);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (!isNaN(n) && n > maxNum && n < 1900) maxNum = n;
+      }
+    }
+    safeNomor = maxNum > 0 ? maxNum + 1 : 76;
+  }
+
+  const safeKode = sk.kodeKlasifikasi?.trim() || '400.3.12.2';
+  const recordId =
+    existingIndex !== -1
+      ? existingSuratList[existingIndex].id
+      : sk.existingSuratId || `sk-panitia-asts-${Date.now()}`;
+
+  const padNomor = String(safeNomor).padStart(3, '0');
+
+  const newSuratKeluarRecord: SuratKeluar = {
+    id: recordId,
+    noAgenda: `${padNomor}/SK-ASTS/2026`,
+    kodeKlasifikasi: safeKode,
+    noSurat: sk.noSK,
+    tanggalSurat: sk.tanggalSK,
+    tujuanSurat: 'Dewan Guru & Panitia Pelaksana ASTS',
+    perihal: sk.tentang,
+    sifat: 'Penting',
+    lampiran: '1 Berkas',
+    pengonsep: 'Kepala Sekolah / Kurikulum',
+    penandatangan: identitas.namaKepalaSekolah || 'ADRIS, S.Pd.,M.Si',
+    nipPenandatangan: '-',
+    statusVerifikasi: 'Sudah Dikirim',
+    statusDrive: 'Tersimpan',
+    lampiranNama: 'SK Panitia Asesmen Tengah Semester 2026-2027.html',
+    isiSuratRingkas: 'SK Panitia Pelaksana Asesmen Tengah Semester (ASTS)',
+  };
+
+  let updatedList: SuratKeluar[];
+  if (existingIndex !== -1) {
+    // MENIMPA / MENGGANTI BARIS YANG SUDAH ADA (TIDAK MEMBUAT BARIS ATAU NOMOR BARU)
+    updatedList = [...existingSuratList];
+    updatedList[existingIndex] = newSuratKeluarRecord;
+  } else {
+    // BARU: TAMBAHKAN SATU BARIS BARU
+    updatedList = [...existingSuratList, newSuratKeluarRecord];
+  }
+
+  await writeSuratKeluarToSheet(
+    accessToken,
+    agendaSheet.spreadsheetId,
+    updatedList,
+    '2026'
+  );
+
+  return {
+    spreadsheetId: agendaSheet.spreadsheetId,
+    webViewLink: agendaSheet.webViewLink,
+    suratRecord: newSuratKeluarRecord,
+  };
+};
+
+/**
  * Finds or Creates the Google Drive folder "04_KEPEGAWAIAN_PTK" inside "TATA USAHA"
  * and finds or creates the spreadsheet "DATA_GURU_PTK".
  */

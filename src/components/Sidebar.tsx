@@ -8,6 +8,7 @@ import {
   FileSignature,
   Scroll,
   Award,
+  ClipboardCheck,
   PlaneTakeoff,
   FilePlus2,
   Contact,
@@ -202,6 +203,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <div className="flex items-center space-x-2.5">
                     <Award className="w-4 h-4 text-center text-amber-500 shrink-0" />
                     <span>SK Tugas</span>
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleSelectTab('sk-panitia-asts')}
+                  id="menu-sk-panitia-asts"
+                  className={navButtonClass('sk-panitia-asts')}
+                >
+                  <div className="flex items-center space-x-2.5">
+                    <ClipboardCheck className="w-4 h-4 text-center text-orange-400 shrink-0" />
+                    <span>SK Panitia ASTS / UTS</span>
                   </div>
                 </button>
               </div>

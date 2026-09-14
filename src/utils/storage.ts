@@ -69,6 +69,7 @@ const buildInitialDatabase = (): DatabaseState => {
     suratKeluar: initialSuratKeluar,
     skKBM: initialSKKBM,
     skTugasTambahan: initialSKTugasTambahan,
+    skPanitiaASTS: [],
     suratTugas: initialSuratTugasDinas,
     pembuatSurat: initialPembuatSurat,
     siswa: initialSiswa,

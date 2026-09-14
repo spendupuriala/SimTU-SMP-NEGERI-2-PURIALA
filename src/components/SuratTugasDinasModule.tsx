@@ -220,7 +220,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
       const matchedFileIds = new Set<string>();
 
       // Step 3: Match existing rekap entries with physical files
-      let updatedList: SuratTugasDinas[] = baseList.map((tugas): SuratTugasDinas => {
+      const updatedList: SuratTugasDinas[] = baseList.map((tugas): SuratTugasDinas => {
         const safeNo = (tugas.noSuratTugas || '').replace(/[/\\?%*:|"<>]/g, '_');
 
         // Match by exact file ID, or by constructed name, or if name contains safeNo
@@ -239,12 +239,12 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
             driveFileId: matchedFile.id,
             driveWebViewLink: matchedFile.webViewLink,
             drivePath: 'TATA USAHA/07_ARSIP_DOKUMEN_SURAT',
-          } as SuratTugasDinas;
+          };
         } else {
           return {
             ...tugas,
             statusDrive: tugas.statusDrive === 'Tersimpan' ? 'Lokal Saja' : tugas.statusDrive,
-          } as SuratTugasDinas;
+          };
         }
       });
 
@@ -297,10 +297,9 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
         }
       }
 
-      // Step 5: Save the combined list back to REKAP_SURAT_TUGAS_DINAS.json to make it Single Source of Truth
-      await saveSuratTugasDataToDrive(googleToken, updatedList);
-
-      // Step 6: Batch update the local state to show results immediately
+      // Step 5: READ-ONLY rule: Update local application state ONLY.
+      // Dilarang mengubah, menimpa, atau mengirim data ke Drive/Sheet selama proses Sinkron / Tarik Data.
+      // Penulisan ke Google Drive HANYA dilakukan jika pengguna eksplisit menekan tombol 'Simpan ke Drive'.
       if (onBatchUpdate) {
         onBatchUpdate(updatedList);
       }

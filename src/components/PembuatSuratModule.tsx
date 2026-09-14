@@ -292,10 +292,9 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
         }
       }
 
-      // 5. Save the combined list back to REKAP_PEMBUAT_SURAT.json to make it Single Source of Truth
-      await savePembuatSuratDataToDrive(googleToken, updatedList);
-
-      // 6. Batch update local state to reflect combined list immediately
+      // 5. READ-ONLY rule: Update local application state ONLY.
+      // Dilarang mengubah, menimpa, atau mengirim data ke Drive/Sheet selama proses Sinkron / Tarik Data.
+      // Penulisan ke Google Drive HANYA dilakukan jika pengguna eksplisit menekan tombol 'Simpan ke Drive'.
       if (onBatchUpdate) {
         onBatchUpdate(updatedList);
       }

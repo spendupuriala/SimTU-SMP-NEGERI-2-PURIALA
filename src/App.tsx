@@ -9,6 +9,7 @@ import { SuratKeluarModule } from './components/SuratKeluarModule';
 import { BukuAgendaModule } from './components/BukuAgendaModule';
 import { SKKBMModule } from './components/SKKBMModule';
 import { SKTugasTambahanModule } from './components/SKTugasTambahanModule';
+import { SKPanitiaASTSModule } from './components/SKPanitiaASTSModule';
 import { SuratTugasDinasModule } from './components/SuratTugasDinasModule';
 import { PembuatSuratModule } from './components/PembuatSuratModule';
 import { BukuIndukModule } from './components/BukuIndukModule';
@@ -25,6 +26,7 @@ import {
   SuratKeluar,
   SKKBM,
   SKTugasTambahan,
+  SKPanitiaASTS,
   SuratTugasDinas,
   PembuatSuratRecord,
   Siswa,
@@ -506,11 +508,29 @@ export default function App() {
 
   // Surat Keluar CRUD
   const handleAddSuratKeluar = (surat: SuratKeluar) => {
+    // Cek apakah surat sudah ada di list (berdasarkan id, noSurat, atau penanda SK ASTS)
+    const existingIndex = data.suratKeluar.findIndex(
+      (s) =>
+        s.id === surat.id ||
+        (s.noSurat && surat.noSurat && s.noSurat === surat.noSurat) ||
+        (s.id?.startsWith('sk-panitia-asts') && surat.id?.startsWith('sk-panitia-asts')) ||
+        (s.noAgenda && surat.noAgenda && s.noAgenda.includes('SK-ASTS') && surat.noAgenda.includes('SK-ASTS'))
+    );
+
+    let updatedList: SuratKeluar[];
+    if (existingIndex !== -1) {
+      // Ganti baris yang sudah ada untuk perbaikannya
+      updatedList = [...data.suratKeluar];
+      updatedList[existingIndex] = surat;
+    } else {
+      updatedList = [...data.suratKeluar, surat];
+    }
+
     const updated = {
       ...data,
-      suratKeluar: [...data.suratKeluar, surat],
+      suratKeluar: updatedList,
     };
-    updateData(updated, 'Surat Keluar', 'CREATE');
+    updateData(updated, 'Surat Keluar', existingIndex !== -1 ? 'UPDATE' : 'CREATE');
   };
 
   const handleBatchSuratKeluar = (newList: SuratKeluar[], mode: 'replace' | 'merge') => {
@@ -602,6 +622,21 @@ export default function App() {
       skTugasTambahan: newList,
     };
     updateData(updated);
+  };
+
+  // SK Panitia ASTS Handler
+  const handleSaveSKPanitiaASTS = (sk: SKPanitiaASTS) => {
+    const existing = data.skPanitiaASTS || [];
+    const idx = existing.findIndex((s) => s.id === sk.id || s.noSK === sk.noSK);
+    const updatedList = idx >= 0
+      ? existing.map((s, i) => (i === idx ? sk : s))
+      : [...existing, sk];
+
+    const updated = {
+      ...data,
+      skPanitiaASTS: updatedList,
+    };
+    updateData(updated, 'SK Panitia ASTS / UTS', 'UPDATE');
   };
 
   // Surat Tugas Dinas CRUD (Synchronized with Surat Keluar agenda)
@@ -1044,6 +1079,22 @@ export default function App() {
                 googleUser={googleUser}
                 isGoogleConnected={isGoogleConnected}
                 onConnectGoogle={handleConnectGoogle}
+              />
+            )}
+
+            {activeTab === 'sk-panitia-asts' && (
+              <SKPanitiaASTSModule
+                identitasSekolah={data.identitasSekolah}
+                guruPTKList={data.guruPTK || []}
+                suratKeluarList={data.suratKeluar || []}
+                kodeKlasifikasiList={kodeKlasifikasiList}
+                onAddSuratKeluar={handleAddSuratKeluar}
+                googleToken={googleToken}
+                googleUser={googleUser}
+                isGoogleConnected={isGoogleConnected}
+                onConnectGoogle={handleConnectGoogle}
+                savedSK={data.skPanitiaASTS?.[0]}
+                onSaveSK={handleSaveSKPanitiaASTS}
               />
             )}
 
