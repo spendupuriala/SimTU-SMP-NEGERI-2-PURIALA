@@ -1005,9 +1005,7 @@ Semua data riil sekolah telah dicadangkan dan diselaraskan secara aman di Google
       report,
     };
   } catch (error: any) {
-    if (error?.message?.includes('AUTH_EXPIRED') || error?.message?.includes('invalid authentication credentials')) {
-      invalidateGoogleAuth();
-    }
+    console.warn('Central sync Tata Usaha notice:', error?.message || error);
     throw error;
   }
 };

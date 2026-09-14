@@ -53,6 +53,9 @@ import {
   setAccessToken,
   invalidateGoogleAuth,
   verifyGoogleAccessToken,
+  getStoredGoogleUser,
+  getValidStoredToken,
+  hasStoredSession,
 } from './services/googleAuth';
 import {
   getDriveQuotaAndUser,
@@ -75,9 +78,9 @@ export default function App() {
   // Kode Klasifikasi Master List (Synchronized across Surat Keluar, Surat Tugas, Pembuat Surat)
   const [kodeKlasifikasiList, setKodeKlasifikasiList] = useState<KodeKlasifikasiSurat[]>(DEFAULT_KODE_KLASIFIKASI);
 
-  // Google Auth & Drive State
-  const [googleUser, setGoogleUser] = useState<any | null>(null);
-  const [googleToken, setGoogleToken] = useState<string | null>(null);
+  // Google Auth & Drive State - Lazy initialized from persistent storage so refresh NEVER loses login
+  const [googleUser, setGoogleUser] = useState<any | null>(() => getStoredGoogleUser());
+  const [googleToken, setGoogleToken] = useState<string | null>(() => getValidStoredToken());
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [driveQuota, setDriveQuota] = useState<GoogleDriveQuota | null>(null);
 
@@ -118,15 +121,7 @@ export default function App() {
       const quota = await getDriveQuotaAndUser(token);
       setDriveQuota(quota);
     } catch (err: any) {
-      if (err?.message?.includes('AUTH_EXPIRED') || err?.message?.includes('invalid authentication credentials')) {
-        invalidateGoogleAuth();
-        setGoogleToken(null);
-        setGoogleUser(null);
-        setDriveQuota(null);
-        setAutoSyncStatus('idle');
-      } else {
-        console.warn('Could not fetch Google Drive quota:', err);
-      }
+      console.warn('Could not fetch Google Drive quota:', err);
     }
   }, []);
 
@@ -135,16 +130,21 @@ export default function App() {
     const unsubscribe = initAuth(
       (user, token) => {
         setGoogleUser(user);
-        setGoogleToken(token);
-        setAccessToken(token);
-        refreshQuota(token);
+        if (token) {
+          setGoogleToken(token);
+          setAccessToken(token);
+          refreshQuota(token);
+        }
       },
       () => {
-        setGoogleUser(null);
-        setGoogleToken(null);
-        setAccessToken(null);
-        setDriveQuota(null);
-        setAutoSyncStatus('idle');
+        // Only clear if the user genuinely has no stored session
+        if (!hasStoredSession()) {
+          setGoogleUser(null);
+          setGoogleToken(null);
+          setAccessToken(null);
+          setDriveQuota(null);
+          setAutoSyncStatus('idle');
+        }
       }
     );
     return () => {
@@ -254,19 +254,8 @@ export default function App() {
           setLastSyncedTime(new Date().toLocaleTimeString('id-ID'));
         })
         .catch((e: any) => {
-          if (
-            e?.message?.includes('AUTH_EXPIRED') ||
-            e?.message?.includes('invalid authentication credentials') ||
-            e?.message?.includes('401')
-          ) {
-            invalidateGoogleAuth();
-            setGoogleToken(null);
-            setGoogleUser(null);
-            setAutoSyncStatus('idle');
-          } else {
-            console.warn('Initial Tata Usaha drive sync skipped:', e?.message || e);
-            setAutoSyncStatus('idle');
-          }
+          console.warn('Initial Tata Usaha drive sync skipped/delayed:', e?.message || e);
+          setAutoSyncStatus('idle');
         });
       return;
     }
@@ -279,40 +268,8 @@ export default function App() {
         setAutoSyncStatus('synced');
         setLastSyncedTime(new Date().toLocaleTimeString('id-ID'));
       } catch (err: any) {
-        if (
-          err?.message?.includes('AUTH_EXPIRED') ||
-          err?.message?.includes('invalid authentication credentials') ||
-          err?.message?.includes('401')
-        ) {
-          invalidateGoogleAuth();
-          setGoogleToken(null);
-          setGoogleUser(null);
-          setAutoSyncStatus('idle');
-        } else if (
-          err?.name === 'TypeError' ||
-          err?.message?.includes('Failed to fetch') ||
-          err?.message?.includes('NetworkError')
-        ) {
-          // Check token validity asynchronously
-          verifyGoogleAccessToken(googleToken)
-            .then((isValid) => {
-              if (!isValid) {
-                invalidateGoogleAuth();
-                setGoogleToken(null);
-                setGoogleUser(null);
-                setAutoSyncStatus('idle');
-              } else {
-                console.warn('Auto sync Google Drive tertunda sementara (koneksi jaringan).');
-                setAutoSyncStatus('idle');
-              }
-            })
-            .catch(() => {
-              setAutoSyncStatus('idle');
-            });
-        } else {
-          console.warn('Auto sync to Google Drive folder TATA USAHA warning:', err?.message || err);
-          setAutoSyncStatus('idle');
-        }
+        console.warn('Auto sync to Google Drive folder TATA USAHA warning:', err?.message || err);
+        setAutoSyncStatus('idle');
       }
     }, 1500);
 

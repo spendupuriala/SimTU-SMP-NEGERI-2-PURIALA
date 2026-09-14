@@ -35,8 +35,7 @@ const DRIVE_UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3/files';
  */
 const handleDriveResponse = async (response: Response, defaultMessage: string) => {
   if (response.status === 401) {
-    invalidateGoogleAuth();
-    throw new Error('AUTH_EXPIRED: Sesi Google Drive telah berakhir atau token tidak valid. Silakan hubungkan kembali.');
+    throw new Error('AUTH_EXPIRED: Sesi Google Drive telah berakhir atau token tidak valid.');
   }
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
@@ -48,8 +47,7 @@ const handleDriveResponse = async (response: Response, defaultMessage: string) =
       msg.includes('has not been used in project') ||
       msg.includes('it is disabled')
     ) {
-      invalidateGoogleAuth();
-      throw new Error('AUTH_EXPIRED: Sesi Google Drive diperbarui. Silakan hubungkan kembali akun Google Anda.');
+      throw new Error('AUTH_EXPIRED: Sesi Google Drive perlu otorisasi ulang.');
     }
     throw new Error(msg || `${defaultMessage} (${response.status})`);
   }
