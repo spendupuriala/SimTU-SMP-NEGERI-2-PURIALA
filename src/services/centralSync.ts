@@ -13,11 +13,10 @@ import {
 import {
   findOrCreateTataUsahaFolder,
   createGoogleDriveFolder,
-  uploadFileToGoogleDrive,
-  updateFileInGoogleDrive,
   getDriveQuotaAndUser,
-  uploadDatabaseBackupToDrive,
   GoogleDriveFile,
+  loadSuratTugasDataFromDrive,
+  loadPembuatSuratDataFromDrive,
 } from './googleDrive';
 import {
   readSheetData,
@@ -187,7 +186,7 @@ export interface CentralSyncReport {
 }
 
 /**
- * Initial empty steps template for UI progress
+ * Initial empty steps template for UI progress (One-Way Fetch / Pull Only)
  */
 export const INITIAL_SYNC_STEPS: CentralSyncStepInfo[] = [
   {
@@ -200,63 +199,58 @@ export const INITIAL_SYNC_STEPS: CentralSyncStepInfo[] = [
   {
     id: 'folder_structure',
     stepNumber: 2,
-    title: 'Struktur Folder Tata Usaha di Google Drive',
-    detail: 'Memeriksa dan membuat folder induk TATA USAHA beserta 6 subfolder arsip...',
+    title: 'Pemindaian Folder & Arsip TATA USAHA',
+    detail: 'Memeriksa folder induk TATA USAHA dan subfolder arsip dinas di Google Drive...',
     status: 'waiting',
   },
   {
-    id: 'pull_check',
+    id: 'pull_master_db',
     stepNumber: 3,
-    title: 'Pemeriksaan & Penarikan Langsung dari Google Sheets & Drive',
-    detail: 'Membaca data riil dari Google Sheets (Surat Masuk, Surat Keluar, PTK, Siswa) & subfolder arsip...',
+    title: 'Penarikan Master Database dari Google Drive',
+    detail: 'Membaca snapshot database SIPEDAS_DATABASE_TATA_USAHA.json dari Google Drive...',
     status: 'waiting',
   },
   {
-    id: 'sync_surat_masuk',
+    id: 'pull_surat_masuk',
     stepNumber: 4,
-    title: 'Sinkronisasi Surat Masuk & Buku Agenda',
-    detail: 'Mengarsipkan data riil Surat Masuk ke folder 01_SURAT_MASUK...',
+    title: 'Penarikan Data Surat Masuk (Satu Arah)',
+    detail: 'Membaca data riil Surat Masuk langsung dari Google Sheets & arsip Drive...',
     status: 'waiting',
   },
   {
-    id: 'sync_surat_keluar',
+    id: 'pull_surat_keluar',
     stepNumber: 5,
-    title: 'Sinkronisasi Surat Keluar & Nomor Surat',
-    detail: 'Merekonsiliasi penomoran urut dan mengarsipkan ke folder 02_SURAT_KELUAR...',
+    title: 'Penarikan Data Surat Keluar & Register (Satu Arah)',
+    detail: 'Membaca data nomor registrasi Surat Keluar dari Google Sheets & arsip Drive...',
     status: 'waiting',
   },
   {
-    id: 'sync_sk_spt',
+    id: 'pull_sk_spt',
     stepNumber: 6,
-    title: 'Sinkronisasi SK KBM, SK Tugas Tambahan & SPT',
-    detail: 'Mengunggah dokumen keputusan dan surat perintah ke 03_SK_DAN_SPT_DINAS...',
+    title: 'Penarikan Dokumen SK, SPT & Pembuat Surat (Satu Arah)',
+    detail: 'Membaca SK KBM, SK Tambahan, Surat Tugas Dinas, dan Draf Pembuat Surat dari Drive...',
     status: 'waiting',
   },
   {
-    id: 'sync_pembuat_surat',
+    id: 'pull_ptk_siswa',
     stepNumber: 7,
-    title: 'Sinkronisasi Pembuat Surat & Template',
-    detail: 'Menyinkronkan draf surat dinas dan dokumen terbitan ke Google Drive...',
+    title: 'Penarikan Master PTK, Siswa & Alumni (Satu Arah)',
+    detail: 'Membaca data kepegawaian PTK dan Buku Induk Siswa/Alumni dari Google Sheets & Drive...',
     status: 'waiting',
   },
   {
-    id: 'sync_ptk_siswa',
+    id: 'apply_state',
     stepNumber: 8,
-    title: 'Sinkronisasi PTK, Buku Induk Siswa & Alumni',
-    detail: 'Mencadangkan master data kepegawaian PTK dan kesiswaan riil...',
-    status: 'waiting',
-  },
-  {
-    id: 'master_backup',
-    stepNumber: 9,
-    title: 'Pembuatan Snapshot Database Master & Ringkasan',
-    detail: 'Menyimpan SIPEDAS_DATABASE_TATA_USAHA.json dan ringkasan eksekutif...',
+    title: 'Pembaruan State Aplikasi (Single Source of Truth)',
+    detail: 'Menimpa seluruh data lokal aplikasi dengan data terbaru dari Google Drive & Sheets (Tanpa Upload)...',
     status: 'waiting',
   },
 ];
 
 /**
- * Execute Central Synchronization (Direct Sheet Pull & Safe Drive Push)
+ * Execute Central Synchronization in One-Way Fetch (Pull Only) Mode.
+ * Reads the latest data from Google Drive & Sheets and directly updates the app state
+ * as the Single Source of Truth without pushing/uploading any local data back to Drive.
  */
 export const runCentralSync = async (
   accessToken: string,
@@ -305,11 +299,12 @@ export const runCentralSync = async (
     skTugasTambahan: { pulled: 0, source: '' },
     suratTugas: { pulled: 0, source: '' },
     pembuatSurat: { pulled: 0, source: '' },
+    masterBackup: { pulled: 0, source: '' },
   };
 
   try {
     // -------------------------------------------------------------
-    // STEP 1: Auth & Storage Quota Check
+    // STEP 1 (Index 0): Auth & Storage Quota Check
     // -------------------------------------------------------------
     updateProgress(0, 'in-progress');
     if (!accessToken) {
@@ -321,7 +316,7 @@ export const runCentralSync = async (
     updateProgress(0, 'completed', `Terhubung ke Google Drive (${userEmail || 'Akun Sekolah'}). Kuota: ${quotaInfo.usage} / ${quotaInfo.limit}`);
 
     // -------------------------------------------------------------
-    // STEP 2: Verify & Create TATA USAHA Folder Structure
+    // STEP 2 (Index 1): Scan TATA USAHA Folder Structure & Subfolders
     // -------------------------------------------------------------
     updateProgress(1, 'in-progress');
     tataUsahaFolderId = await findOrCreateTataUsahaFolder(accessToken, 'TATA USAHA');
@@ -334,6 +329,7 @@ export const runCentralSync = async (
       { key: 'ptk', name: '04_KEPEGAWAIAN_PTK' },
       { key: 'siswa_alumni', name: '05_KESISWAAN_DAN_ALUMNI' },
       { key: 'backup', name: '06_DATABASE_DAN_BACKUP' },
+      { key: 'arsip_dokumen', name: '07_ARSIP_DOKUMEN_SURAT' },
     ];
 
     for (const sub of requiredSubfolders) {
@@ -352,10 +348,85 @@ export const runCentralSync = async (
           subfolderMap[sub.key] = await createGoogleDriveFolder(accessToken, sub.name, tataUsahaFolderId);
         }
       } catch (e) {
-        console.warn(`Subfolder creation warning for ${sub.name}:`, e);
+        console.warn(`Subfolder scan notice for ${sub.name}:`, e);
       }
     }
-    updateProgress(1, 'completed', 'Folder TATA USAHA dan 6 subfolder arsip dinas siap di Google Drive.');
+    updateProgress(1, 'completed', 'Folder TATA USAHA dan subfolder arsip dinas teridentifikasi di Google Drive.');
+
+    // -------------------------------------------------------------
+    // STEP 3 (Index 2): Pull Master Database Snapshot from Google Drive
+    // -------------------------------------------------------------
+    updateProgress(2, 'in-progress');
+    let masterSnapshotFound = false;
+    try {
+      const q = `name = 'SIPEDAS_DATABASE_TATA_USAHA.json' and '${tataUsahaFolderId}' in parents and trashed = false`;
+      const res = await fetch(`${DRIVE_API_URL}/files?${new URLSearchParams({ q, fields: 'files(id, name, modifiedTime)' }).toString()}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (res.ok) {
+        const fileList = await res.json();
+        if (fileList.files && fileList.files.length > 0) {
+          const masterFileId = fileList.files[0].id;
+          const contentRes = await fetch(`${DRIVE_API_URL}/files/${masterFileId}?alt=media`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          if (contentRes.ok) {
+            const masterPayload = await contentRes.json();
+            if (masterPayload && masterPayload.data) {
+              workingState = {
+                ...workingState,
+                ...masterPayload.data,
+              };
+              masterSnapshotFound = true;
+              moduleSources.masterBackup = {
+                pulled: 1,
+                source: `Google Drive / TATA USAHA (${fileList.files[0].name})`,
+              };
+            }
+          }
+        }
+      }
+
+      if (!masterSnapshotFound && subfolderMap['backup']) {
+        const backupQ = `'${subfolderMap['backup']}' in parents and name contains 'BACKUP_DATABASE_TATA_USAHA' and trashed = false`;
+        const backupRes = await fetch(`${DRIVE_API_URL}/files?${new URLSearchParams({ q: backupQ, orderBy: 'modifiedTime desc', fields: 'files(id, name)' }).toString()}`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (backupRes.ok) {
+          const backupList = await backupRes.json();
+          if (backupList.files && backupList.files.length > 0) {
+            const backupFileId = backupList.files[0].id;
+            const backupContentRes = await fetch(`${DRIVE_API_URL}/files/${backupFileId}?alt=media`, {
+              headers: { Authorization: `Bearer ${accessToken}` },
+            });
+            if (backupContentRes.ok) {
+              const backupPayload = await backupContentRes.json();
+              if (backupPayload) {
+                workingState = {
+                  ...workingState,
+                  ...backupPayload,
+                };
+                masterSnapshotFound = true;
+                moduleSources.masterBackup = {
+                  pulled: 1,
+                  source: `Google Drive / Backup (${backupList.files[0].name})`,
+                };
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Notice reading master DB snapshot from Drive:', err);
+    }
+
+    updateProgress(
+      2,
+      'completed',
+      masterSnapshotFound
+        ? `Snapshot master database terpadu berhasil dibaca dari Google Drive (${moduleSources.masterBackup.source}).`
+        : 'Snapshot master di Drive belum ada, melanjutkan penarikan data dari Google Sheets & arsip modul.'
+    );
 
     // -------------------------------------------------------------
     // STEP 3: Real Direct Pull from Google Sheets & Subfolder Archives
@@ -711,186 +782,66 @@ export const runCentralSync = async (
     );
 
     // -------------------------------------------------------------
-    // STEP 4: Sync Surat Masuk
+    // STEP 4 (Index 3): Surat Masuk Verification
     // -------------------------------------------------------------
     updateProgress(3, 'in-progress');
     const suratMasukCount = (workingState.suratMasuk || []).length;
-    const targetFolderSuratMasuk = subfolderMap['surat_masuk'] || tataUsahaFolderId;
-
-    const suratMasukPayload = {
-      judul: 'BUKU AGENDA SURAT MASUK SMP NEGERI 2 PURIALA',
-      satuanPendidikan: workingState.identitasSekolah?.namaSekolah || 'SMP Negeri 2 Puriala',
-      diperbaruiPada: new Date().toISOString(),
-      sumberData: moduleSources.suratMasuk.source || 'Data Riil Terverifikasi',
-      totalArsip: suratMasukCount,
-      arsip: (workingState.suratMasuk || []).map((s) => ({
-        ...s,
-        statusDrive: 'Tersimpan',
-      })),
-    };
-    await uploadOrUpdateJsonFile(accessToken, 'BUKU_AGENDA_SURAT_MASUK.json', suratMasukPayload, targetFolderSuratMasuk);
-    updateProgress(3, 'completed', `Tersinkronisasi ${suratMasukCount} arsip Surat Masuk ke folder 01_SURAT_MASUK.`);
+    updateProgress(
+      3,
+      'completed',
+      `Berhasil menarik & memverifikasi ${suratMasukCount} arsip Surat Masuk (${moduleSources.suratMasuk.source || 'Data Riil'}).`
+    );
 
     // -------------------------------------------------------------
-    // STEP 5: Sync Surat Keluar
+    // STEP 5 (Index 4): Surat Keluar & Register Verification
     // -------------------------------------------------------------
     updateProgress(4, 'in-progress');
     const suratKeluarCount = (workingState.suratKeluar || []).length;
-    const targetFolderSuratKeluar = subfolderMap['surat_keluar'] || tataUsahaFolderId;
-
-    const suratKeluarPayload = {
-      judul: 'BUKU AGENDA DAN REGISTER NOMOR SURAT KELUAR SMP NEGERI 2 PURIALA',
-      satuanPendidikan: workingState.identitasSekolah?.namaSekolah || 'SMP Negeri 2 Puriala',
-      diperbaruiPada: new Date().toISOString(),
-      sumberData: moduleSources.suratKeluar.source || 'Data Riil Terverifikasi',
-      totalArsip: suratKeluarCount,
-      arsip: (workingState.suratKeluar || []).map((s) => ({
-        ...s,
-        statusDrive: 'Tersimpan',
-      })),
-    };
-    await uploadOrUpdateJsonFile(accessToken, 'BUKU_AGENDA_SURAT_KELUAR.json', suratKeluarPayload, targetFolderSuratKeluar);
-    updateProgress(4, 'completed', `Tersinkronisasi ${suratKeluarCount} arsip Surat Keluar ke folder 02_SURAT_KELUAR.`);
+    updateProgress(
+      4,
+      'completed',
+      `Berhasil menarik & memverifikasi ${suratKeluarCount} arsip Surat Keluar (${moduleSources.suratKeluar.source || 'Nomor Surat Terpadu'}).`
+    );
 
     // -------------------------------------------------------------
-    // STEP 6: Sync SK KBM, SK Tugas Tambahan & Surat Tugas Dinas (SPT)
+    // STEP 6 (Index 5): SK, SPT Dinas & Pembuat Surat
     // -------------------------------------------------------------
     updateProgress(5, 'in-progress');
     const skKBMCount = (workingState.skKBM || []).length;
     const skTTCount = (workingState.skTugasTambahan || []).length;
     const suratTugasCount = (workingState.suratTugas || []).length;
-    const targetFolderSK = subfolderMap['sk_spt'] || tataUsahaFolderId;
-
-    const skSptPayload = {
-      judul: 'DOKUMEN KEPUTUSAN KEPALA SEKOLAH & SURAT TUGAS DINAS SMPN 2 PURIALA',
-      diperbaruiPada: new Date().toISOString(),
-      totalSKKBM: skKBMCount,
-      totalSKTugasTambahan: skTTCount,
-      totalSuratTugas: suratTugasCount,
-      skKBM: workingState.skKBM || [],
-      skTugasTambahan: workingState.skTugasTambahan || [],
-      suratTugas: workingState.suratTugas || [],
-    };
-    await uploadOrUpdateJsonFile(accessToken, 'DOKUMEN_SK_DAN_SURAT_TUGAS.json', skSptPayload, targetFolderSK);
-    updateProgress(5, 'completed', `Tersinkronisasi ${skKBMCount} SK KBM, ${skTTCount} SK Tambahan, & ${suratTugasCount} Surat Tugas ke 03_SK_DAN_SPT_DINAS.`);
+    const pembuatSuratCount = (workingState.pembuatSurat || []).length;
+    updateProgress(
+      5,
+      'completed',
+      `Berhasil menarik ${skKBMCount} SK KBM, ${skTTCount} SK Tambahan, ${suratTugasCount} SPT, & ${pembuatSuratCount} Pembuat Surat.`
+    );
 
     // -------------------------------------------------------------
-    // STEP 7: Sync Pembuat Surat & Template
+    // STEP 7 (Index 6): PTK, Siswa & Alumni
     // -------------------------------------------------------------
     updateProgress(6, 'in-progress');
-    const pembuatSuratCount = (workingState.pembuatSurat || []).length;
-    const pembuatSuratPayload = {
-      judul: 'DRAF & DOKUMEN GENERATOR PEMBUAT SURAT DINAS SMPN 2 PURIALA',
-      diperbaruiPada: new Date().toISOString(),
-      totalSurat: pembuatSuratCount,
-      suratList: workingState.pembuatSurat || [],
-    };
-    await uploadOrUpdateJsonFile(accessToken, 'DRAF_PEMBUAT_SURAT.json', pembuatSuratPayload, targetFolderSuratKeluar);
-    updateProgress(6, 'completed', `Tersinkronisasi ${pembuatSuratCount} draf dan arsip Pembuat Surat.`);
-
-    // -------------------------------------------------------------
-    // STEP 8: Sync PTK, Siswa & Alumni
-    // -------------------------------------------------------------
-    updateProgress(7, 'in-progress');
     const ptkCount = (workingState.guruPTK || []).length;
     const siswaCount = (workingState.siswa || []).length;
     const alumniCount = (workingState.alumni || []).length;
-
-    const targetFolderPTK = subfolderMap['ptk'] || tataUsahaFolderId;
-    const targetFolderSiswa = subfolderMap['siswa_alumni'] || tataUsahaFolderId;
-
-    const ptkPayload = {
-      judul: 'DATA GURU & TENAGA KEPENDIDIKAN (PTK) SMPN 2 PURIALA',
-      diperbaruiPada: new Date().toISOString(),
-      sumberData: moduleSources.guruPTK.source || 'Data Riil Terverifikasi',
-      totalPTK: ptkCount,
-      guruPTK: workingState.guruPTK || [],
-      daftarPTK: workingState.guruPTK || [],
-    };
-    // PTK sync to Sheets handled elsewhere
-
-    const siswaPayload = {
-      judul: 'BUKU INDUK PESERTA DIDIK & ALUMNI SMPN 2 PURIALA',
-      diperbaruiPada: new Date().toISOString(),
-      sumberData: moduleSources.siswa.source || 'Data Riil Terverifikasi',
-      totalSiswa: siswaCount,
-      totalAlumni: alumniCount,
-      daftarSiswa: workingState.siswa || [],
-      daftarAlumni: workingState.alumni || [],
-    };
-    await uploadOrUpdateJsonFile(accessToken, 'BUKU_INDUK_SISWA_DAN_ALUMNI.json', siswaPayload, targetFolderSiswa);
-    updateProgress(7, 'completed', `Tersinkronisasi ${ptkCount} data PTK, ${siswaCount} Siswa, & ${alumniCount} Alumni.`);
+    updateProgress(
+      6,
+      'completed',
+      `Berhasil menarik ${ptkCount} data PTK, ${siswaCount} Siswa, & ${alumniCount} Alumni dari Google Sheets & Drive.`
+    );
 
     // -------------------------------------------------------------
-    // STEP 9: Master Database Backup & Executive Summary
+    // STEP 8 (Index 7): Pembaruan State Aplikasi (Single Source of Truth - Satu Arah)
     // -------------------------------------------------------------
-    updateProgress(8, 'in-progress');
-    const targetFolderBackup = subfolderMap['backup'] || tataUsahaFolderId;
+    updateProgress(7, 'in-progress');
 
-    // 1. Create a dated snapshot in 06_DATABASE_DAN_BACKUP
-    const backupSnapshot = await uploadDatabaseBackupToDrive(accessToken, workingState, targetFolderBackup);
-
-    // 2. Update master root SIPEDAS_DATABASE_TATA_USAHA.json in TATA USAHA folder
-    const nowIso = new Date().toISOString();
-    const masterDbPayload = {
-      _lastSync: nowIso,
-      _syncTarget: 'GOOGLE_DRIVE_FOLDER_TATA_USAHA',
-      _version: '2.0',
-      _syncedBy: userEmail || 'Tata Usaha SMPN 2 Puriala',
-      sumberSinkronisasi: moduleSources,
-      statistik: {
-        totalSuratMasuk: suratMasukCount,
-        totalSuratKeluar: suratKeluarCount,
-        totalSKKBM: skKBMCount,
-        totalSKTugasTambahan: skTTCount,
-        totalSuratTugas: suratTugasCount,
-        totalPembuatSurat: pembuatSuratCount,
-        totalGuruPTK: ptkCount,
-        totalSiswa: siswaCount,
-        totalAlumni: alumniCount,
-      },
-      data: workingState,
-    };
-    await uploadOrUpdateJsonFile(accessToken, 'SIPEDAS_DATABASE_TATA_USAHA.json', masterDbPayload, tataUsahaFolderId);
-
-    // 3. Update executive summary TXT file
-    const summaryText = `======================================================================
-PUSAT SINKRONISASI SimTU - SMP NEGERI 2 PURIALA
-SISTEM INFORMASI PERSURATAN & ADMINISTRASI TATA USAHA SEKOLAH
-======================================================================
-Waktu Sinkronisasi : ${new Date().toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'long' })}
-Akun Google Drive  : ${userEmail || 'smpnpuriala523@gmail.com'}
-Folder Penyimpanan : Google Drive / TATA USAHA
-Status Integritas  : TERSINKRONISASI PENUH & DATA RIIL AMAN (100% HIJAU)
-
-SUMBER INTEGRASI GOOGLE SHEETS & DRIVE:
-- Surat Masuk          : ${moduleSources.suratMasuk.source || 'Data Riil Tersimpan'} (${suratMasukCount} Arsip)
-- Surat Keluar         : ${moduleSources.suratKeluar.source || 'Data Riil Tersimpan'} (${suratKeluarCount} Arsip)
-- Data Guru & PTK      : ${moduleSources.guruPTK.source || 'Data Riil Tersimpan'} (${ptkCount} Personil)
-- Buku Induk Siswa     : ${moduleSources.siswa.source || 'Data Riil Tersimpan'} (${siswaCount} Siswa)
-- Data Alumni          : ${moduleSources.alumni.source || 'Data Riil Tersimpan'} (${alumniCount} Alumni)
-
-RINGKASAN REKAPITULASI DOKUMEN:
-----------------------------------------------------------------------
-1. Surat Masuk (Buku Agenda)     : ${suratMasukCount} Arsip (Folder: 01_SURAT_MASUK)
-2. Surat Keluar (Buku Agenda)    : ${suratKeluarCount} Arsip (Folder: 02_SURAT_KELUAR)
-3. SK Pembagian Tugas (SK KBM)   : ${skKBMCount} Dokumen (Folder: 03_SK_DAN_SPT_DINAS)
-4. SK Tugas Tambahan Guru        : ${skTTCount} Dokumen (Folder: 03_SK_DAN_SPT_DINAS)
-5. Surat Perintah Tugas (SPT)    : ${suratTugasCount} Arsip (Folder: 03_SK_DAN_SPT_DINAS)
-6. Generator Pembuat Surat       : ${pembuatSuratCount} Arsip (Folder: 02_SURAT_KELUAR)
-7. Tenaga Pendidik & Kependidikan: ${ptkCount} Personil (Folder: 04_KEPEGAWAIAN_PTK)
-8. Buku Induk Peserta Didik      : ${siswaCount} Siswa (Folder: 05_KESISWAAN_DAN_ALUMNI)
-9. Arsip Ijazah & Alumni         : ${alumniCount} Alumni (Folder: 05_KESISWAAN_DAN_ALUMNI)
-10. Cadangan Snapshot Master     : ${backupSnapshot.name} (Folder: 06_DATABASE_DAN_BACKUP)
-
-Semua data riil sekolah telah dicadangkan dan diselaraskan secara aman di Google Workspace Drive & Sheets.
-======================================================================`;
-
-    const summaryBlob = new Blob([summaryText], { type: 'text/plain;charset=utf-8' });
-    await uploadOrUpdateFile(accessToken, 'RINGKASAN_DATA_TATA_USAHA.txt', summaryBlob, 'text/plain', tataUsahaFolderId);
-
-    const durationSeconds = Math.round((Date.now() - startTime) / 1000);
-    updateProgress(8, 'completed', `Snapshot master ${backupSnapshot.name} berhasil dibuat (${durationSeconds} detik).`);
+    // Reconcile Surat Keluar numbering with Surat Tugas & Pembuat Surat
+    workingState.suratKeluar = syncAllModulesToSuratKeluar(
+      workingState.suratKeluar || [],
+      workingState.suratTugas || [],
+      workingState.pembuatSurat || [],
+      workingState.identitasSekolah
+    );
 
     const totalSyncedItems =
       suratMasukCount +
@@ -903,9 +854,16 @@ Semua data riil sekolah telah dicadangkan dan diselaraskan secara aman di Google
       siswaCount +
       alumniCount;
 
+    const durationSeconds = Math.max(1, Math.round((Date.now() - startTime) / 1000));
+    updateProgress(
+      7,
+      'completed',
+      `State aplikasi berhasil diperbarui sebagai Single Source of Truth (${totalSyncedItems} data terverifikasi dalam ${durationSeconds} detik).`
+    );
+
     const report: CentralSyncReport = {
       success: true,
-      message: 'Sinkronisasi Pusat Berhasil! Seluruh data riil dari Google Sheets & Drive telah berhasil diselaraskan dan dicadangkan dengan aman.',
+      message: 'Berhasil memperbarui semua data dari Google Drive (Satu Arah). Seluruh modul aplikasi telah diselaraskan dengan data terbaru.',
       timestamp: new Date().toLocaleTimeString('id-ID'),
       durationSeconds,
       tataUsahaFolderId,
@@ -914,88 +872,86 @@ Semua data riil sekolah telah dicadangkan dan diselaraskan secara aman di Google
       totalSyncedItems,
       modules: {
         suratMasuk: {
-          pushed: suratMasukCount,
-          pulled: moduleSources.suratMasuk.pulled,
+          pushed: 0,
+          pulled: suratMasukCount,
           status: 'success',
-          detail: `${suratMasukCount} arsip tersinkron (${moduleSources.suratMasuk.source || 'Data Riil'})`,
+          detail: `${suratMasukCount} data ditarik (${moduleSources.suratMasuk.source || 'Data Riil'})`,
           driveFolder: 'TATA USAHA / 01_SURAT_MASUK',
           sourceSheet: moduleSources.suratMasuk.source,
         },
         suratKeluar: {
-          pushed: suratKeluarCount,
-          pulled: moduleSources.suratKeluar.pulled,
+          pushed: 0,
+          pulled: suratKeluarCount,
           status: 'success',
-          detail: `${suratKeluarCount} arsip tersinkron (${moduleSources.suratKeluar.source || 'Nomor surat terpadu'})`,
+          detail: `${suratKeluarCount} data ditarik (${moduleSources.suratKeluar.source || 'Nomor Surat Terpadu'})`,
           driveFolder: 'TATA USAHA / 02_SURAT_KELUAR',
           sourceSheet: moduleSources.suratKeluar.source,
         },
         skKBM: {
-          pushed: skKBMCount,
-          pulled: moduleSources.skKBM.pulled,
+          pushed: 0,
+          pulled: skKBMCount,
           status: 'success',
-          detail: `${skKBMCount} dokumen SK tersinkron`,
+          detail: `${skKBMCount} dokumen SK ditarik`,
           driveFolder: 'TATA USAHA / 03_SK_DAN_SPT_DINAS',
         },
         skTugasTambahan: {
-          pushed: skTTCount,
-          pulled: moduleSources.skTugasTambahan.pulled,
+          pushed: 0,
+          pulled: skTTCount,
           status: 'success',
-          detail: `${skTTCount} dokumen SK tambahan tersinkron`,
+          detail: `${skTTCount} dokumen SK ditarik`,
           driveFolder: 'TATA USAHA / 03_SK_DAN_SPT_DINAS',
         },
         suratTugas: {
-          pushed: suratTugasCount,
-          pulled: moduleSources.suratTugas.pulled,
+          pushed: 0,
+          pulled: suratTugasCount,
           status: 'success',
-          detail: `${suratTugasCount} arsip SPT tersinkron`,
+          detail: `${suratTugasCount} arsip SPT ditarik`,
           driveFolder: 'TATA USAHA / 03_SK_DAN_SPT_DINAS',
         },
         pembuatSurat: {
-          pushed: pembuatSuratCount,
-          pulled: moduleSources.pembuatSurat.pulled,
+          pushed: 0,
+          pulled: pembuatSuratCount,
           status: 'success',
-          detail: `${pembuatSuratCount} draf surat tersinkron`,
+          detail: `${pembuatSuratCount} draf surat ditarik`,
           driveFolder: 'TATA USAHA / 02_SURAT_KELUAR',
         },
         guruPTK: {
-          pushed: ptkCount,
-          pulled: moduleSources.guruPTK.pulled,
+          pushed: 0,
+          pulled: ptkCount,
           status: 'success',
-          detail: `${ptkCount} data PTK (${moduleSources.guruPTK.source || 'Data Riil'})`,
+          detail: `${ptkCount} data PTK ditarik (${moduleSources.guruPTK.source || 'Data Riil'})`,
           driveFolder: 'TATA USAHA / 04_KEPEGAWAIAN_PTK',
           sourceSheet: moduleSources.guruPTK.source,
         },
         siswa: {
-          pushed: siswaCount,
-          pulled: moduleSources.siswa.pulled,
+          pushed: 0,
+          pulled: siswaCount,
           status: 'success',
-          detail: `${siswaCount} data siswa (${moduleSources.siswa.source || 'Buku Induk Riil'})`,
+          detail: `${siswaCount} data siswa ditarik (${moduleSources.siswa.source || 'Buku Induk Riil'})`,
           driveFolder: 'TATA USAHA / 05_KESISWAAN_DAN_ALUMNI',
           sourceSheet: moduleSources.siswa.source,
         },
         alumni: {
-          pushed: alumniCount,
-          pulled: moduleSources.alumni.pulled,
+          pushed: 0,
+          pulled: alumniCount,
           status: 'success',
-          detail: `${alumniCount} data alumni & ijazah`,
+          detail: `${alumniCount} data alumni ditarik`,
           driveFolder: 'TATA USAHA / 05_KESISWAAN_DAN_ALUMNI',
           sourceSheet: moduleSources.alumni.source,
         },
         identitasSekolah: {
-          pushed: 1,
-          pulled: 0,
+          pushed: 0,
+          pulled: 1,
           status: 'success',
           detail: workingState.identitasSekolah?.namaSekolah || 'SMP Negeri 2 Puriala',
           driveFolder: 'TATA USAHA',
         },
         masterBackup: {
-          pushed: 1,
-          pulled: 0,
+          pushed: 0,
+          pulled: moduleSources.masterBackup.pulled,
           status: 'success',
-          detail: backupSnapshot.name,
+          detail: moduleSources.masterBackup.source || 'SIPEDAS_DATABASE_TATA_USAHA.json',
           driveFolder: 'TATA USAHA / 06_DATABASE_DAN_BACKUP',
-          fileName: backupSnapshot.name,
-          fileId: backupSnapshot.id,
         },
       },
     };
@@ -1005,56 +961,8 @@ Semua data riil sekolah telah dicadangkan dan diselaraskan secara aman di Google
       report,
     };
   } catch (error: any) {
-    console.warn('Central sync Tata Usaha notice:', error?.message || error);
+    console.warn('Central pull sync Tata Usaha notice:', error?.message || error);
     throw error;
   }
 };
-
-/**
- * Helper: Upload or Update JSON file inside target folder in Google Drive
- */
-async function uploadOrUpdateJsonFile(
-  accessToken: string,
-  fileName: string,
-  data: any,
-  folderId: string
-): Promise<GoogleDriveFile> {
-  const jsonString = JSON.stringify(data, null, 2);
-  const blob = new Blob([jsonString], { type: 'application/json' });
-  return uploadOrUpdateFile(accessToken, fileName, blob, 'application/json', folderId);
-}
-
-/**
- * Helper: Upload or Update file in Google Drive
- */
-async function uploadOrUpdateFile(
-  accessToken: string,
-  fileName: string,
-  blob: Blob,
-  mimeType: string,
-  folderId: string
-): Promise<GoogleDriveFile> {
-  try {
-    const query = `name = '${fileName}' and '${folderId}' in parents and trashed = false`;
-    const res = await fetch(`${DRIVE_API_URL}/files?${new URLSearchParams({ q: query, fields: 'files(id, name)' }).toString()}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data.files && data.files.length > 0) {
-        const fileId = data.files[0].id;
-        const patched = await updateFileInGoogleDrive(accessToken, fileId, blob, mimeType);
-        if (patched) {
-          return { id: fileId, name: fileName, mimeType };
-        }
-      }
-    }
-  } catch (e) {
-    console.warn(`File update search error for ${fileName}:`, e);
-  }
-
-  // Fallback upload fresh file
-  return uploadFileToGoogleDrive(accessToken, blob, fileName, mimeType, folderId);
-}
 

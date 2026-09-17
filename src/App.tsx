@@ -65,6 +65,7 @@ import {
   loadSuratTugasDataFromDrive,
   loadPembuatSuratDataFromDrive,
 } from './services/googleDrive';
+import { runCentralSync } from './services/centralSync';
 import { notifyGlobalSync, subscribeToGlobalSync } from './services/globalSync';
 
 export default function App() {
@@ -383,39 +384,36 @@ export default function App() {
     }
   };
 
-  // Cloud Synchronization: Backs up to Google Drive if connected
+  // Cloud Synchronization: Pull-only (One-Way Fetch) from Google Drive & Sheets
   const handleSync = async () => {
     setIsSyncing(true);
-    showToast('Sedang memperbarui data ke Folder "TATA USAHA" di Google Drive...', 'info', 2000);
+    showToast('Sedang menarik data terbaru dari Google Drive (Satu Arah)...', 'info', 3000);
 
     try {
       if (googleToken) {
-        await syncLiveDatabaseToTataUsahaFolder(googleToken, data);
-        const backupResult = await uploadDatabaseBackupToDrive(googleToken, data);
+        const result = await runCentralSync(googleToken, data);
+        updateData(result.updatedData, 'Semua Modul', 'DRIVE_SYNC');
         await refreshQuota(googleToken);
         setAutoSyncStatus('synced');
         setLastSyncedTime(new Date().toLocaleTimeString('id-ID'));
         showToast(
-          `Sinkronisasi Berhasil! Database terupdate di Folder "TATA USAHA" & Cadangan: ${backupResult.name}`,
+          'Berhasil memperbarui semua data dari Google Drive (Satu Arah)',
           'success',
-          4000
+          5000
         );
         // Push notification of the Google Drive Sync action to global_sync
         const email = googleUser?.email || googleUser?.displayName || 'spendupuriala@gmail.com';
-        notifyGlobalSync('Google Drive Sync', email, 'DRIVE_SYNC');
+        notifyGlobalSync('Google Drive Sync (Pull Only)', email, 'DRIVE_SYNC');
       } else {
-        // Local state sync simulation when not logged in
-        setTimeout(() => {
-          showToast(
-            'Sinkronisasi Lokal Selesai. Hubungkan Google Drive untuk pencadangan cloud otomatis ke Folder TATA USAHA.',
-            'info',
-            3500
-          );
-        }, 1000);
+        showToast(
+          'Silakan hubungkan Google Drive terlebih dahulu untuk menarik data terbaru.',
+          'info',
+          3500
+        );
       }
     } catch (err: any) {
       console.error('Sync error:', err);
-      showToast(`Gagal sinkronisasi ke Google Drive: ${err?.message}`, 'error', 4000);
+      showToast(`Gagal menarik data dari Google Drive: ${err?.message}`, 'error', 4000);
     } finally {
       setIsSyncing(false);
     }
@@ -1189,8 +1187,8 @@ export default function App() {
                 onDisconnectGoogle={handleDisconnectGoogle}
                 databaseState={data}
                 onUpdateDatabase={(updated) => {
-                  updateData(updated);
-                  showToast('Sinkronisasi Pusat berhasil memperbarui basis data lokal!', 'success');
+                  updateData(updated, 'Semua Modul', 'DRIVE_SYNC');
+                  showToast('Berhasil memperbarui semua data dari Google Drive (Satu Arah)', 'success', 5000);
                 }}
               />
             )}

@@ -181,12 +181,12 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onSync}
             disabled={isSyncing || autoSyncStatus === 'syncing'}
-            className="text-blue-100 hover:text-white transition flex items-center gap-1.5 text-xs bg-emerald-700/60 hover:bg-emerald-600 border border-emerald-400/40 px-2.5 py-1.5 rounded-lg shadow-sm"
-            title={`Database otomatis terupdate di Google Drive Folder TATA USAHA. Klik untuk cadangan manual. ${lastSyncedTime ? `(Terakhir: ${lastSyncedTime})` : ''}`}
+            className="text-blue-100 hover:text-white transition flex items-center gap-1.5 text-xs bg-emerald-700/60 hover:bg-emerald-600 border border-emerald-400/40 px-2.5 py-1.5 rounded-lg shadow-sm cursor-pointer"
+            title={`Tarik & perbarui data terbaru dari Google Drive & Sheets (Satu Arah). ${lastSyncedTime ? `(Terakhir: ${lastSyncedTime})` : ''}`}
           >
             <RotateCw className={`w-3.5 h-3.5 ${isSyncing || autoSyncStatus === 'syncing' ? 'animate-spin text-amber-200' : 'text-emerald-300'}`} />
             <span className="hidden lg:inline text-[11px] font-bold">
-              {isSyncing || autoSyncStatus === 'syncing' ? 'Menyimpan...' : 'TATA USAHA Sync'}
+              {isSyncing || autoSyncStatus === 'syncing' ? 'Menarik...' : 'TATA USAHA Sync (Tarik)'}
             </span>
           </button>
         ) : (

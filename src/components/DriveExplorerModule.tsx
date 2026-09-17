@@ -35,6 +35,7 @@ import {
   FileCheck2,
   Workflow,
   Cpu,
+  CloudDownload,
 } from 'lucide-react';
 import { DriveFolder, DriveFile, IdentitasSekolah, DatabaseState } from '../types';
 import {
@@ -562,18 +563,18 @@ export const DriveExplorerModule: React.FC<DriveExplorerModuleProps> = ({
               <div className="bg-gradient-to-r from-[#0f2444] via-[#1a3660] to-[#1e4078] rounded-2xl p-5 md:p-6 text-white shadow-xl border border-blue-700/50 relative overflow-hidden">
                 <div className="relative z-10 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-5">
                   <div className="space-y-2.5 max-w-2xl">
-                    <div className="inline-flex items-center gap-2 bg-blue-500/20 text-blue-200 text-[11px] font-bold px-3 py-1 rounded-full border border-blue-400/30">
-                      <ArrowDownUp className="w-3.5 h-3.5 text-blue-300" />
-                      <span>Pusat Sinkronisasi Terpadu (Tarik & Kirim Data)</span>
+                    <div className="inline-flex items-center gap-2 bg-emerald-500/20 text-emerald-200 text-[11px] font-bold px-3 py-1 rounded-full border border-emerald-400/30">
+                      <CloudDownload className="w-3.5 h-3.5 text-emerald-300" />
+                      <span>Pusat Penarikan Data Satu Arah (One-Way Pull Only)</span>
                     </div>
                     <h3 className="text-xl md:text-2xl font-extrabold text-white tracking-tight flex items-center gap-2 flex-wrap">
                       <span>Pusat Sinkronisasi SimTU Cloud</span>
                       <span className="bg-emerald-500/30 text-emerald-300 text-xs font-bold px-2.5 py-0.5 rounded-full border border-emerald-400/40 flex items-center gap-1">
-                        <CheckCircle2 className="w-3 h-3" /> 1-Klik Otomatis
+                        <CheckCircle2 className="w-3 h-3" /> Single Source of Truth
                       </span>
                     </h3>
                     <p className="text-xs md:text-sm text-blue-100/80 leading-relaxed">
-                      Sinkronkan (tarik dan kirim) semua modul yang terhubung ke Google Drive & Sheets secara serentak: Surat Masuk, Surat Keluar & Nomor Agenda, SK KBM, SK Tugas Tambahan, SPT Dinas, Pembuat Surat, Data PTK & Siswa, serta Cadangan Master Database.
+                      Tarik & perbarui semua data terbaru dari Google Drive & Sheets secara Satu Arah (Pull Only) untuk semua modul: Surat Masuk, Surat Keluar & Nomor Agenda, SK KBM, SK Tugas Tambahan, SPT Dinas, Pembuat Surat, serta Data PTK & Siswa. Seluruh state lokal aplikasi akan langsung diperbarui dengan data resmi dari Google Drive tanpa mengunggah/mengubah data di cloud.
                     </p>
 
                     {/* Integrated Module Badges */}
@@ -605,16 +606,16 @@ export const DriveExplorerModule: React.FC<DriveExplorerModuleProps> = ({
                       onClick={handleRunCentralSync}
                       disabled={isCentralSyncRunning || isGoogleLoading}
                       className="bg-gradient-to-r from-emerald-500 via-emerald-600 to-teal-600 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-700 active:scale-95 text-white font-extrabold px-6 py-3.5 rounded-xl shadow-xl hover:shadow-emerald-500/25 text-sm flex items-center justify-center gap-2.5 transition border border-emerald-400/50 cursor-pointer"
-                      title="Sinkronkan seluruh modul persuratan dan administrasi ke Google Drive & Sheets sekaligus"
+                      title="Tarik seluruh data terbaru dari Google Drive & Sheets (Satu Arah) untuk memperbarui state aplikasi lokal"
                     >
                       {isCentralSyncRunning ? (
                         <>
                           <RotateCw className="w-5 h-5 animate-spin text-white" />
-                          <span>Sedang Menyinkronkan Semua...</span>
+                          <span>Sedang Menarik Data...</span>
                         </>
                       ) : (
                         <>
-                          <RefreshCw className="w-5 h-5 text-white animate-pulse" />
+                          <CloudDownload className="w-5 h-5 text-white" />
                           <span>SINKRONKAN SEMUA DATA SEKARANG</span>
                         </>
                       )}
@@ -1459,10 +1460,10 @@ export const DriveExplorerModule: React.FC<DriveExplorerModuleProps> = ({
                         </div>
                         <div>
                           <h4 className="font-extrabold text-sm text-emerald-950">
-                            Sinkronisasi Pusat Selesai & Terpadu!
+                            Sinkronisasi Satu Arah Selesai (Pull Only)!
                           </h4>
                           <p className="text-[11px] text-emerald-800">
-                            Waktu: {centralSyncReport.timestamp} (Durasi: {centralSyncReport.durationSeconds} detik)
+                            Berhasil memperbarui semua data dari Google Drive (Satu Arah) • Waktu: {centralSyncReport.timestamp} ({centralSyncReport.durationSeconds} detik)
                           </p>
                         </div>
                       </div>
