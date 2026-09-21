@@ -31,6 +31,7 @@ import {
   Tag,
   BookOpen,
   CloudDownload,
+  LogIn,
 } from 'lucide-react';
 import {
   IdentitasSekolah,
@@ -67,16 +68,18 @@ import {
 const parsePembuatSuratFileName = (fileName: string, createdTime?: string) => {
   const nameWithoutExt = fileName.replace(/\.[^/.]+$/, "");
   
-  // Replace underscores with spaces
-  const parts = nameWithoutExt.split('_');
+  // Replace underscores and hyphens with spaces to support all naming patterns (spasi, _ , or -)
+  const normalized = nameWithoutExt.replace(/[_\-]+/g, ' ');
+  const parts = normalized.split(/\s+/).filter(Boolean);
   
   let jenisSuratNama = 'Surat Keterangan';
-  let subjekName = 'Siswa/Guru';
+  let subjekName = '';
   let noSurat = '';
   let targetSubjek: 'siswa' | 'guru' = 'siswa';
 
   // Try to extract a pattern of Nomor Surat
-  const numberMatch = nameWithoutExt.match(/\b\d+[\/\-]\d+[\/\-]\w+[\/\-]\d+\b/);
+  // Supporting patterns with slash "/", hyphen "-", or dot "."
+  const numberMatch = nameWithoutExt.match(/\b\d+[\/\-\.]\d+[\/\-\.]\w+[\/\-\.]\d+\b/);
   if (numberMatch) {
     noSurat = numberMatch[0];
   }
@@ -87,6 +90,15 @@ const parsePembuatSuratFileName = (fileName: string, createdTime?: string) => {
     return lp !== 'smpn2' && lp !== 'puriala' && lp !== 'smpn' && lp !== 'smp' && lp !== 'negeri';
   });
 
+  // Guess targetSubjek from filename keywords
+  const lowerName = nameWithoutExt.toLowerCase();
+  if (lowerName.includes('guru') || lowerName.includes('ptk') || lowerName.includes('pns') || lowerName.includes('nip') || lowerName.includes('800')) {
+    targetSubjek = 'guru';
+  } else if (lowerName.includes('siswa') || lowerName.includes('nisn') || lowerName.includes('murid') || lowerName.includes('aktif') || lowerName.includes('421.3')) {
+    targetSubjek = 'siswa';
+  }
+
+  // Separate Jenis Surat & Subjek Name
   if (cleanParts.length >= 3) {
     if (cleanParts[0].toLowerCase() === 'surat') {
       const siswaIndex = cleanParts.findIndex(p => p.toLowerCase() === 'siswa');
@@ -95,19 +107,18 @@ const parsePembuatSuratFileName = (fileName: string, createdTime?: string) => {
       if (siswaIndex !== -1) {
         jenisSuratNama = cleanParts.slice(0, siswaIndex + 1).join(' ');
         subjekName = cleanParts.slice(siswaIndex + 1).join(' ');
-        targetSubjek = 'siswa';
       } else if (guruIndex !== -1) {
         jenisSuratNama = cleanParts.slice(0, guruIndex + 1).join(' ');
         subjekName = cleanParts.slice(guruIndex + 1).join(' ');
-        targetSubjek = 'guru';
       } else {
         jenisSuratNama = cleanParts.slice(0, 2).join(' ');
         subjekName = cleanParts.slice(2).join(' ');
       }
     } else {
+      jenisSuratNama = 'Surat Keterangan';
       subjekName = cleanParts.join(' ');
     }
-  } else {
+  } else if (cleanParts.length > 0) {
     subjekName = cleanParts.join(' ');
   }
 
@@ -115,13 +126,28 @@ const parsePembuatSuratFileName = (fileName: string, createdTime?: string) => {
     return str.replace(/\b\w/g, c => c.toUpperCase());
   };
 
+  const cleanSubjek = subjekName.trim();
+  const isTrivialSubjek = !cleanSubjek || cleanSubjek.toLowerCase() === 'siswa/guru' || cleanSubjek.toLowerCase() === 'siswa' || cleanSubjek.toLowerCase() === 'guru';
+
+  // Jika gagal mendeteksi nomor surat atau nama subjek secara spesifik,
+  // gunakan seluruh nama file (tanpa ekstensi) sebagai perihal/jenisSuratNama
+  const isFailedParsing = !noSurat || isTrivialSubjek;
+  if (isFailedParsing) {
+    jenisSuratNama = nameWithoutExt.replace(/[_\-]+/g, ' '); // Gunakan nama file utuh yang rapi
+    subjekName = 'Siswa/Guru';
+  } else {
+    subjekName = cleanSubjek;
+  }
+
   subjekName = capitalizeWords(subjekName.trim());
   jenisSuratNama = capitalizeWords(jenisSuratNama.trim());
 
   if (!noSurat) {
     const year = createdTime ? new Date(createdTime).getFullYear() : new Date().getFullYear();
     const prefix = targetSubjek === 'guru' ? '800' : '421.3';
-    noSurat = `${prefix}/052/SMPN.2/${year}`;
+    // Gunakan nomor acak berbasis milidetik atau random untuk ID unik
+    const randNum = Math.floor(100 + Math.random() * 900);
+    noSurat = `${prefix}/${randNum}/SMPN.2/${year}`;
   }
 
   return { jenisSuratNama, subjekName, noSurat, targetSubjek };
@@ -186,16 +212,53 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
     try {
       // 1. Fetch physical files in folder TATA USAHA/07_ARSIP_DOKUMEN_SURAT
       const files = await fetchArsipDokumenFiles(googleToken);
-      const docFiles = files.filter(
-        (f) =>
-          !f.isFolder &&
-          f.name !== 'REKAP_PEMBUAT_SURAT.json' &&
-          f.name !== 'REKAP_SURAT_TUGAS_DINAS.json' &&
-          !f.name.toUpperCase().startsWith('SPT_') && // Exclude Surat Tugas files
-          (f.name.toLowerCase().endsWith('.pdf') ||
-            f.name.toLowerCase().endsWith('.docx') ||
-            f.name.toLowerCase().endsWith('.doc'))
-      );
+      const docFiles = files.filter((f) => {
+        if (f.isFolder) return false;
+        
+        const upperName = f.name.toUpperCase();
+        if (
+          upperName === 'REKAP_PEMBUAT_SURAT.JSON' ||
+          upperName === 'REKAP_SURAT_TUGAS_DINAS.JSON'
+        ) {
+          return false;
+        }
+
+        const isDoc = upperName.endsWith('.PDF') || upperName.endsWith('.DOCX') || upperName.endsWith('.DOC');
+        if (!isDoc) return false;
+
+        // BUKAN berkas SPT/SPPD
+        const isSptOrSppd = 
+          upperName.startsWith('SPT_') ||
+          upperName.startsWith('SPPD_') ||
+          upperName.includes('SPT_') ||
+          upperName.includes('SPPD_') ||
+          upperName.includes('SURAT_TUGAS') ||
+          upperName.includes('SPT ') ||
+          upperName.includes('SPPD ') ||
+          upperName.includes('SPT-') ||
+          upperName.includes('SPPD-') ||
+          upperName.includes('SURAT TUGAS') ||
+          upperName.includes('SURAT-TUGAS');
+          
+        if (isSptOrSppd) return false;
+
+        // DUKUNG SEMUA FORMAT NAMA FILE PDF/Docs yang tersimpan (misal file yang menggunakan spasi, garis bawah "_", atau strip "-").
+        const normalizedForCheck = upperName.replace(/[\s\-]+/g, '_');
+
+        const isGeneralLetter = 
+          normalizedForCheck.includes('SURAT_KETERANGAN') ||
+          normalizedForCheck.includes('SURAT_REKOMENDASI') ||
+          normalizedForCheck.includes('SURAT_PINDAH') ||
+          normalizedForCheck.includes('SURAT_PERNYATAAN') ||
+          normalizedForCheck.includes('SURAT_KELAKUAN') ||
+          normalizedForCheck.includes('SURAT_CUTI') ||
+          normalizedForCheck.includes('SURAT_IJAZAH') ||
+          normalizedForCheck.startsWith('SURAT_') ||
+          normalizedForCheck.includes('SURAT');
+
+        // Terima berkas dokumen surat keterangan/umum apa pun di folder ini yang bukan merupakan berkas SPT/SPPD
+        return isGeneralLetter || true;
+      });
 
       // 2. Load rekap JSON data
       const driveRekap = await loadPembuatSuratDataFromDrive(googleToken);
@@ -246,12 +309,8 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
 
         const parsed = parsePembuatSuratFileName(f.name, f.createdTime);
 
-        // Check if we already have this file or parsed nomor in our list to prevent duplicate rows
-        const exists = updatedList.some(
-          (item) =>
-            item.driveFileId === f.id ||
-            (item.noSurat && parsed.noSurat && item.noSurat.toLowerCase() === parsed.noSurat.toLowerCase())
-        );
+        // Check if we already have this file based strictly on Google Drive File ID to prevent duplicates
+        const exists = updatedList.some((item) => item.driveFileId === f.id);
 
         if (!exists) {
           const newRecord: PembuatSuratRecord = {
@@ -293,8 +352,6 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
       }
 
       // 5. READ-ONLY rule: Update local application state ONLY.
-      // Dilarang mengubah, menimpa, atau mengirim data ke Drive/Sheet selama proses Sinkron / Tarik Data.
-      // Penulisan ke Google Drive HANYA dilakukan jika pengguna eksplisit menekan tombol 'Simpan ke Drive'.
       if (onBatchUpdate) {
         onBatchUpdate(updatedList);
       }
@@ -1023,8 +1080,14 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
     try {
       setIsUploadingToDrive(true);
       const htmlContent = renderSuratDocumentHTML(surat, identitasSekolah);
-      const cleanName = (surat.subjekData.nama || 'Subjek').replace(/[^a-zA-Z0-9_-]/g, '_');
-      const cleanJenis = (surat.jenisSuratNama || 'Surat').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const cleanName = (surat.subjekData.nama || 'Subjek')
+        .replace(/[^a-zA-Z0-9\s]/g, '')
+        .trim()
+        .replace(/\s+/g, '_');
+      const cleanJenis = (surat.jenisSuratNama || 'Surat')
+        .replace(/[^a-zA-Z0-9\s]/g, '')
+        .trim()
+        .replace(/\s+/g, '_');
       const fileName = `${cleanJenis}_${cleanName}_SMPN2_PURIALA.pdf`;
 
       // Convert HTML to PDF blob
@@ -1207,24 +1270,42 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
 
       {/* Sync feedback notification message inside the view */}
       {syncFeedback && (
-        <div className={`p-3 rounded-xl text-xs flex items-center justify-between gap-2 border ${
+        <div className={`p-3 rounded-xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 border ${
           syncFeedback.type === 'success'
             ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
             : syncFeedback.type === 'error'
             ? 'bg-rose-50 text-rose-800 border-rose-200'
             : 'bg-sky-50 text-sky-800 border-sky-200'
         }`}>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-start sm:items-center gap-1.5">
             {syncFeedback.type === 'error' ? (
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
+              <AlertCircle className="w-4.5 h-4.5 shrink-0 text-rose-500 mt-0.5 sm:mt-0" />
             ) : (
-              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
+              <CheckCircle2 className="w-4.5 h-4.5 shrink-0 text-emerald-500" />
             )}
-            <span className="font-semibold">{syncFeedback.message}</span>
+            <div className="space-y-1">
+              <span className="font-semibold block">
+                {syncFeedback.message.includes('AUTH_EXPIRED')
+                  ? 'Sesi Google Drive telah berakhir (Token Kedaluwarsa) demi keamanan. Silakan hubungkan kembali akun Anda.'
+                  : syncFeedback.message}
+              </span>
+              {syncFeedback.type === 'error' && syncFeedback.message.includes('AUTH_EXPIRED') && onConnectGoogle && (
+                <div className="pt-1.5">
+                  <button
+                    type="button"
+                    onClick={onConnectGoogle}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-[11px] shadow transition active:scale-95 inline-flex items-center gap-1"
+                  >
+                    <LogIn className="w-3 h-3 text-white" />
+                    <span>Hubungkan Kembali Sekarang</span>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
           <button
             onClick={() => setSyncFeedback(null)}
-            className="text-slate-400 hover:text-slate-600 p-0.5"
+            className="text-slate-400 hover:text-slate-600 p-0.5 self-end sm:self-auto shrink-0"
           >
             <X className="w-3.5 h-3.5" />
           </button>

@@ -28,6 +28,7 @@ import {
   BookOpen,
   CloudDownload,
   CloudUpload,
+  LogIn,
 } from 'lucide-react';
 import {
   SuratTugasDinas,
@@ -68,42 +69,55 @@ const parseSuratTugasFileName = (fileName: string, createdTime?: string) => {
   const nameWithoutExt = fileName.replace(/\.[^/.]+$/, "");
   
   let noSuratTugas = '';
-  let personilName = 'Nama Pegawai';
+  let personilName = '';
 
-  if (nameWithoutExt.toUpperCase().startsWith('SPT_')) {
-    const cleanName = nameWithoutExt.substring(4); // remove 'SPT_'
-    const segments = cleanName.split('_');
-    
-    // Check for SMPN or school codes in segments
-    const smpnIndex = segments.findIndex(s => s.toLowerCase().includes('smpn') || s.toLowerCase().includes('puriala'));
-    if (smpnIndex !== -1 && smpnIndex < segments.length) {
-      const numSegments = segments.slice(0, smpnIndex + 2);
-      noSuratTugas = numSegments.join('/');
-      personilName = segments.slice(smpnIndex + 2).join(' ');
-    } else if (segments.length >= 3) {
-      noSuratTugas = segments.slice(0, 2).join('/');
-      personilName = segments.slice(2).join(' ');
-    } else {
-      personilName = cleanName;
-    }
-  } else {
-    personilName = nameWithoutExt;
+  // Clean prefix SPT_ or SPPD_ or Surat_Tugas_
+  let cleanName = nameWithoutExt;
+  if (cleanName.toUpperCase().startsWith('SPT_')) {
+    cleanName = cleanName.substring(4);
+  } else if (cleanName.toUpperCase().startsWith('SPPD_')) {
+    cleanName = cleanName.substring(5);
+  } else if (cleanName.toUpperCase().startsWith('SURAT_TUGAS_')) {
+    cleanName = cleanName.substring(12);
+  } else if (cleanName.toUpperCase().startsWith('SURAT_TUGAS')) {
+    cleanName = cleanName.substring(11);
   }
 
-  // Clean personilName
-  personilName = personilName.replace(/_/g, ' ').trim();
+  // Look for a nomor surat pattern in the file name segments
+  const segments = cleanName.split('_');
+  
+  // Try to detect SMPN, SMP, or Puriala segment
+  const schoolIndex = segments.findIndex(s => {
+    const sl = s.toLowerCase();
+    return sl.includes('smp') || sl.includes('puriala') || sl.includes('spt') || sl.includes('sppd');
+  });
+
+  if (schoolIndex !== -1) {
+    let endIdx = schoolIndex + 1;
+    if (endIdx < segments.length && /^\d{4}$/.test(segments[endIdx])) {
+      endIdx++;
+    }
+    noSuratTugas = segments.slice(0, endIdx).join('/');
+    personilName = segments.slice(endIdx).join(' ');
+  } else if (segments.length >= 3) {
+    noSuratTugas = segments.slice(0, 2).join('/');
+    personilName = segments.slice(2).join(' ');
+  } else {
+    personilName = cleanName;
+  }
+
+  personilName = personilName.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
   const capitalizeWords = (str: string) => {
     return str.replace(/\b\w/g, c => c.toUpperCase());
   };
-  personilName = capitalizeWords(personilName);
+  personilName = capitalizeWords(personilName || 'Nama Pegawai');
 
   if (!noSuratTugas) {
     const year = createdTime ? new Date(createdTime).getFullYear() : new Date().getFullYear();
     noSuratTugas = `090/052/SMPN.2/${year}`;
   }
 
-  // Restore dynamic separator characters if needed
-  noSuratTugas = noSuratTugas.replace(/_/g, '/').replace(/-/g, '/');
+  noSuratTugas = noSuratTugas.replace(/_/g, '/').replace(/-/g, '/').replace(/\s+/g, '');
 
   return { noSuratTugas, personilName };
 };
@@ -202,7 +216,12 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
           f.name !== 'REKAP_PEMBUAT_SURAT.json' &&
           (f.name.toLowerCase().endsWith('.pdf') ||
             f.name.toLowerCase().endsWith('.docx') ||
-            f.name.toLowerCase().endsWith('.doc'))
+            f.name.toLowerCase().endsWith('.doc')) &&
+          (f.name.toUpperCase().startsWith('SPT_') ||
+            f.name.toUpperCase().startsWith('SPPD_') ||
+            f.name.toUpperCase().includes('SPT_') ||
+            f.name.toUpperCase().includes('SPPD_') ||
+            f.name.toUpperCase().includes('SURAT_TUGAS'))
       );
 
       // Step 2: Load the rekap JSON file
@@ -677,8 +696,15 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
     setSaveSuccessMsg(null);
     try {
       const htmlContent = generateSuratTugasFullHtml(tugas, identitasSekolah, printMode);
-      const safeNo = (tugas.noSuratTugas || 'Surat_Tugas').replace(/[/\\?%*:|"<>]/g, '_');
-      const fileName = `SPT_${safeNo}_${tugas.personil[0]?.nama.replace(/[^a-zA-Z0-9]/g, '_') || 'Dinas'}.pdf`;
+      const cleanNama = (tugas.personil[0]?.nama || 'Dinas')
+        .replace(/[^a-zA-Z0-9\s]/g, '')
+        .trim()
+        .replace(/\s+/g, '_');
+      const safeNo = (tugas.noSuratTugas || 'Surat_Tugas')
+        .replace(/[/\\?%*:|"<>]/g, '_')
+        .trim()
+        .replace(/\s+/g, '_');
+      const fileName = `SPT_${safeNo}_${cleanNama}.pdf`;
 
       // Convert HTML to PDF blob
       const opt = {
@@ -874,24 +900,42 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
 
       {/* Sync feedback notification message inside the view */}
       {syncFeedback && (
-        <div className={`p-3 rounded-xl text-xs flex items-center justify-between gap-2 border ${
+        <div className={`p-3 rounded-xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 border ${
           syncFeedback.type === 'success'
             ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
             : syncFeedback.type === 'error'
             ? 'bg-rose-50 text-rose-800 border-rose-200'
             : 'bg-sky-50 text-sky-800 border-sky-200'
         }`}>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-start sm:items-center gap-1.5">
             {syncFeedback.type === 'error' ? (
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
+              <AlertCircle className="w-4.5 h-4.5 shrink-0 text-rose-500 mt-0.5 sm:mt-0" />
             ) : (
-              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
+              <CheckCircle2 className="w-4.5 h-4.5 shrink-0 text-emerald-500" />
             )}
-            <span className="font-semibold">{syncFeedback.message}</span>
+            <div className="space-y-1">
+              <span className="font-semibold block">
+                {syncFeedback.message.includes('AUTH_EXPIRED')
+                  ? 'Sesi Google Drive telah berakhir (Token Kedaluwarsa) demi keamanan. Silakan hubungkan kembali akun Anda.'
+                  : syncFeedback.message}
+              </span>
+              {syncFeedback.type === 'error' && syncFeedback.message.includes('AUTH_EXPIRED') && onConnectGoogle && (
+                <div className="pt-1.5">
+                  <button
+                    type="button"
+                    onClick={onConnectGoogle}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-[11px] shadow transition active:scale-95 inline-flex items-center gap-1"
+                  >
+                    <LogIn className="w-3 h-3 text-white" />
+                    <span>Hubungkan Kembali Sekarang</span>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
           <button
             onClick={() => setSyncFeedback(null)}
-            className="text-slate-400 hover:text-slate-600 p-0.5"
+            className="text-slate-400 hover:text-slate-600 p-0.5 self-end sm:self-auto shrink-0"
           >
             <X className="w-3.5 h-3.5" />
           </button>

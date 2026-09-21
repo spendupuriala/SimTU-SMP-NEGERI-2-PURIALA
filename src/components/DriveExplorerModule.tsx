@@ -731,15 +731,39 @@ export const DriveExplorerModule: React.FC<DriveExplorerModuleProps> = ({
                     <p className="text-xs font-semibold">Mengambil data dari Google Drive...</p>
                   </div>
                 ) : gDriveError ? (
-                  <div className="flex flex-col items-center justify-center py-16 text-rose-600 space-y-2">
-                    <AlertCircle className="w-8 h-8" />
-                    <p className="text-xs font-semibold">{gDriveError}</p>
-                    <button
-                      onClick={() => fetchGDriveFiles(currentGDriveFolderId, gDriveSearch)}
-                      className="bg-blue-600 text-white text-xs px-4 py-1.5 rounded-lg font-bold"
-                    >
-                      Coba Lagi
-                    </button>
+                  <div className="flex flex-col items-center justify-center py-16 text-rose-600 space-y-3 max-w-md mx-auto text-center animate-in fade-in zoom-in-95 duration-200">
+                    <AlertCircle className="w-8 h-8 text-rose-500 animate-bounce" />
+                    <div>
+                      <p className="text-sm font-extrabold text-slate-800">
+                        {gDriveError.includes('AUTH_EXPIRED')
+                          ? 'Sesi Google Drive Berakhir'
+                          : 'Gagal Membaca Google Drive'}
+                      </p>
+                      <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                        {gDriveError.includes('AUTH_EXPIRED')
+                          ? 'Sesi Google Drive telah berakhir (Token Kedaluwarsa) demi alasan keamanan. Silakan lakukan otorisasi ulang agar dapat terus menyinkronkan data.'
+                          : gDriveError}
+                      </p>
+                    </div>
+                    <div className="flex gap-2 justify-center">
+                      {gDriveError.includes('AUTH_EXPIRED') && onConnectGoogle ? (
+                        <button
+                          onClick={onConnectGoogle}
+                          className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-4 py-2 rounded-xl font-bold flex items-center gap-1.5 shadow-md transition active:scale-95 cursor-pointer"
+                        >
+                          <LogIn className="w-3.5 h-3.5" />
+                          <span>Hubungkan Kembali</span>
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => fetchGDriveFiles(currentGDriveFolderId, gDriveSearch)}
+                          className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-2 rounded-xl font-bold flex items-center gap-1.5 shadow-md transition active:scale-95 cursor-pointer"
+                        >
+                          <RotateCw className="w-3.5 h-3.5" />
+                          <span>Coba Lagi</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ) : gDriveFiles.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-20 text-slate-400 space-y-3">

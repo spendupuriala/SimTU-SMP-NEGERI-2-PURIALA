@@ -1093,30 +1093,42 @@ export const fetchArsipDokumenFiles = async (accessToken: string): Promise<Googl
   if (!accessToken) return [];
   try {
     const archiveFolderId = await findOrCreateArsipDokumenSuratFolder(accessToken);
-    const query = `'${archiveFolderId}' in parents and trashed = false`;
-    const params = new URLSearchParams({
-      q: query,
-      fields: 'files(id, name, mimeType, size, webViewLink, webContentLink, iconLink, createdTime, modifiedTime)',
-      orderBy: 'modifiedTime desc',
-      pageSize: '100',
-    });
+    let allFiles: GoogleDriveFile[] = [];
+    let nextPageToken: string | null = null;
 
-    const res = await fetch(`${DRIVE_API_URL}/files?${params.toString()}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    do {
+      const query = `'${archiveFolderId}' in parents and trashed = false`;
+      const params = new URLSearchParams({
+        q: query,
+        fields: 'nextPageToken, files(id, name, mimeType, size, webViewLink, webContentLink, iconLink, createdTime, modifiedTime)',
+        orderBy: 'modifiedTime desc',
+        pageSize: '100',
+      });
+      if (nextPageToken) {
+        params.append('pageToken', nextPageToken);
+      }
 
-    if (res.status === 401) {
-      invalidateGoogleAuth();
-      return [];
-    }
+      const res = await fetch(`${DRIVE_API_URL}/files?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
 
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.files || []).map((file: any) => ({
-      ...file,
-      isFolder: file.mimeType === 'application/vnd.google-apps.folder',
-      size: file.size ? formatBytes(parseInt(file.size, 10)) : '-',
-    }));
+      if (res.status === 401) {
+        invalidateGoogleAuth();
+        return [];
+      }
+
+      if (!res.ok) break;
+      const data = await res.json();
+      const filesPage = (data.files || []).map((file: any) => ({
+        ...file,
+        isFolder: file.mimeType === 'application/vnd.google-apps.folder',
+        size: file.size ? formatBytes(parseInt(file.size, 10)) : '-',
+      }));
+      allFiles = [...allFiles, ...filesPage];
+      nextPageToken = data.nextPageToken || null;
+    } while (nextPageToken);
+
+    return allFiles;
   } catch (error: any) {
     if (error?.message?.includes('AUTH_EXPIRED') || error?.message?.includes('invalid authentication credentials')) {
       invalidateGoogleAuth();
