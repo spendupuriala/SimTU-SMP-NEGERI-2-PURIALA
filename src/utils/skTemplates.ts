@@ -1965,6 +1965,20 @@ export function generateSuratTugasFullHtml(
   const showSPPDHal1 = mode === 'sppd_only' || mode === 'sppd_hal1' || mode === 'all';
   const showSPPDHal2 = mode === 'sppd_only' || mode === 'sppd_hal2' || mode === 'all';
 
+  // Page break and display styles optimized for Google Apps Script HTML-to-PDF Converter
+  const basePageStyle = `display: block !important; clear: both !important; height: auto !important; min-height: 0 !important; overflow: visible !important; max-height: none !important;`;
+  
+  // First page: page-break-after only (no page-break-before)
+  const firstPageStyle = `page-break-after: always !important; break-after: page !important; ${basePageStyle}`;
+  
+  // Subsequent pages: both page-break-before and page-break-after
+  const subsequentPageStyle = `page-break-before: always !important; page-break-after: always !important; break-before: page !important; break-after: page !important; ${basePageStyle}`;
+
+  // Assign styles based on which pages are rendered
+  const sptStyle = firstPageStyle; // SPT is always the first page if showSPT is true
+  const sppdHal1Style = showSPT ? subsequentPageStyle : firstPageStyle; // SPPD Hal 1 is subsequent if SPT is shown, otherwise it's first
+  const sppdHal2Style = (showSPT || showSPPDHal1) ? subsequentPageStyle : firstPageStyle; // SPPD Hal 2 is subsequent if either is shown, otherwise first
+
   return `<!DOCTYPE html>
 <html lang="id">
 <head>
@@ -2014,8 +2028,8 @@ export function generateSuratTugasFullHtml(
       padding: 2.5cm 2cm 2cm 2.5cm; /* Atas: 2.5cm, Kanan: 2cm, Bawah: 2cm, Kiri: 2.5cm */
       box-sizing: border-box;
       box-shadow: 0 4px 15px rgba(0,0,0,0.08);
-      position: relative;
-      overflow: visible;
+      overflow: visible !important;
+      max-height: none !important;
       word-wrap: break-word;
       overflow-wrap: break-word;
     }
@@ -2139,8 +2153,6 @@ export function generateSuratTugasFullHtml(
 
     /* TABEL SPPD HALAMAN 1 */
     .sppd-meta-box {
-      display: flex;
-      justify-content: flex-end;
       margin-bottom: 4px;
       font-size: 9.5pt;
     }
@@ -2200,8 +2212,6 @@ export function generateSuratTugasFullHtml(
 
     /* TANDA TANGAN */
     .ttd-wrapper {
-      display: flex;
-      justify-content: flex-end;
       margin-top: 10px;
     }
     .ttd-box {
@@ -2235,29 +2245,35 @@ export function generateSuratTugasFullHtml(
   <!-- ========================================== -->
   <!-- HALAMAN: SURAT PERINTAH TUGAS (SPT) DINAS -->
   <!-- ========================================== -->
-  <div class="document-page">
-    <div class="no-print" style="margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
-      <span class="sheet-indicator">Berkas Master Drive: Surat Perintah Tugas (SPT)</span>
-      <span style="font-size: 8.5pt; color: #64748b; font-family: sans-serif;">Halaman Surat Tugas</span>
-    </div>
+  <div class="document-page" style="${sptStyle}">
+    <table class="no-print" width="100%" style="width: 100%; border-collapse: collapse; border: none; margin-bottom: 8px;">
+      <tr>
+        <td align="left" valign="middle">
+          <span class="sheet-indicator">Berkas Master Drive: Surat Perintah Tugas (SPT)</span>
+        </td>
+        <td align="right" valign="middle">
+          <span style="font-size: 8.5pt; color: #64748b; font-family: sans-serif;">Halaman Surat Tugas</span>
+        </td>
+      </tr>
+    </table>
 
     <!-- KOP SURAT RESMI GANDA -->
     <div class="kop-header">
-      <table class="kop-table">
-        <tr>
-          <td class="kop-logo-td">
-            <img src="${LOGO_KABUPATEN_KONAWE_BASE64}" alt="Logo Pemkab Konawe" class="kop-logo" />
+      <table class="kop-table" width="100%" align="center" style="border-collapse: collapse; border: none; width: 100%;">
+        <tr align="center" valign="middle">
+          <td align="center" valign="middle" style="width: 70px; min-width: 70px; max-width: 70px; padding: 0;">
+            <img src="${LOGO_KABUPATEN_KONAWE_BASE64}" alt="Logo Pemkab Konawe" class="kop-logo" style="width: 65px; max-width: 65px; height: auto; display: block; margin: 0 auto; object-fit: contain;" />
           </td>
-          <td class="kop-text-td">
-            <div class="kop-instansi">PEMERINTAH KABUPATEN KONAWE</div>
-            <div class="kop-dinas">DINAS PENDIDIKAN DAN KEBUDAYAAN</div>
-            <div class="kop-sekolah">${identitas.namaSekolah || 'SMP NEGERI 2 PURIALA'}</div>
-            <div class="kop-akreditasi">Terakreditasi "${identitas.akreditasi || 'B (Baik)'}"</div>
-            <div class="kop-alamat">Alamat: ${identitas.alamat || 'Jl. Poros Lambuya – Motaha Km.23 Kec. Puriala'}, Kode Pos: ${identitas.kodePos || '93462'}</div>
-            <div class="kop-kontak">NPSN: ${identitas.npsn || '40402805'} | Email: ${identitas.email || 'smpnpuriala523@gmail.com'}</div>
+          <td align="center" valign="middle" style="padding: 0 8px;">
+            <div class="kop-instansi" style="font-size: 12pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; margin: 0; line-height: 1.2;">PEMERINTAH KABUPATEN KONAWE</div>
+            <div class="kop-dinas" style="font-size: 13pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; margin: 2px 0; line-height: 1.2;">DINAS PENDIDIKAN DAN KEBUDAYAAN</div>
+            <div class="kop-sekolah" style="font-size: 15pt; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; margin: 2px 0 3px 0; line-height: 1.2;">${identitas.namaSekolah || 'SMP NEGERI 2 PURIALA'}</div>
+            <div class="kop-akreditasi" style="font-size: 9pt; font-weight: bold; margin: 1px 0; line-height: 1.2;">Terakreditasi "${identitas.akreditasi || 'B (Baik)'}"</div>
+            <div class="kop-alamat" style="font-size: 8.5pt; margin: 1px 0; line-height: 1.25;">Alamat: ${identitas.alamat || 'Jl. Poros Lambuya – Motaha Km.23 Kec. Puriala'}, Kode Pos: ${identitas.kodePos || '93462'}</div>
+            <div class="kop-kontak" style="font-size: 8pt; margin: 0; line-height: 1.25;">NPSN: ${identitas.npsn || '40402805'} | Email: ${identitas.email || 'smpnpuriala523@gmail.com'}</div>
           </td>
-          <td class="kop-logo-td">
-            <img src="${LOGO_TUT_WURI_BASE64}" alt="Logo Tut Wuri Handayani" class="kop-logo" />
+          <td align="center" valign="middle" style="width: 70px; min-width: 70px; max-width: 70px; padding: 0;">
+            <img src="${LOGO_TUT_WURI_BASE64}" alt="Logo Tut Wuri Handayani" class="kop-logo" style="width: 65px; max-width: 65px; height: auto; display: block; margin: 0 auto; object-fit: contain;" />
           </td>
         </tr>
       </table>
@@ -2367,17 +2383,20 @@ export function generateSuratTugasFullHtml(
     </table>
 
     <!-- Tanda Tangan Kepala Sekolah -->
-    <div class="ttd-wrapper">
-      <div class="ttd-box">
-        <div>Dikeluarkan di : ${tempatPenetapan}</div>
-        <div>Pada tanggal : ${tanggalFormat}</div>
-        <div style="margin-top: 3px; font-weight: bold;">Kepala Sekolah,</div>
-        <div class="ttd-space"></div>
-        <div style="font-weight: bold; text-decoration: underline; text-transform: uppercase;">${kepsekNama}</div>
-        <div>${kepsekPangkat}</div>
-        <div>NIP. ${kepsekNip}</div>
-      </div>
-    </div>
+    <table width="100%" style="width: 100%; border-collapse: collapse; border: none; margin-top: 10px;">
+      <tr>
+        <td style="width: 55%;"></td>
+        <td align="center" style="width: 45%; text-align: center; font-size: 10pt; line-height: 1.3;">
+          <div>Dikeluarkan di : ${tempatPenetapan}</div>
+          <div>Pada tanggal : ${tanggalFormat}</div>
+          <div style="margin-top: 3px; font-weight: bold;">Kepala Sekolah,</div>
+          <div style="height: 55px;"></div>
+          <div style="font-weight: bold; text-decoration: underline; text-transform: uppercase;">${kepsekNama}</div>
+          <div>${kepsekPangkat}</div>
+          <div>NIP. ${kepsekNip}</div>
+        </td>
+      </tr>
+    </table>
 
     <!-- Tembusan -->
     <div style="margin-top: 10px; font-size: 9pt;">
@@ -2397,31 +2416,37 @@ export function generateSuratTugasFullHtml(
   <!-- GOOGLE DRIVE: Folder TATA USAHA/SURAT/SURAT KELUAR - File "SPPD"          -->
   <!-- SHEET 1: "SPPD HAL-1" (Format Lembar Depan / Format Utama SPPD)           -->
   <!-- ========================================================================= -->
-  <div class="document-page ${showSPT ? 'page-break' : ''}">
-    <div class="no-print" style="margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
-      <span class="sheet-indicator" style="background-color: #ecfdf5; color: #065f46; border-color: #a7f3d0;">
-        Google Drive SPPD • Sheet "SPPD HAL-1" (Halaman 1)
-      </span>
-      <span style="font-size: 8.5pt; color: #64748b; font-family: sans-serif;">Lembar Muka SPPD</span>
-    </div>
+  <div class="document-page" style="${sppdHal1Style}">
+    <table class="no-print" width="100%" style="width: 100%; border-collapse: collapse; border: none; margin-bottom: 8px;">
+      <tr>
+        <td align="left" valign="middle">
+          <span class="sheet-indicator" style="background-color: #ecfdf5; color: #065f46; border-color: #a7f3d0;">
+            Google Drive SPPD • Sheet "SPPD HAL-1" (Halaman 1)
+          </span>
+        </td>
+        <td align="right" valign="middle">
+          <span style="font-size: 8.5pt; color: #64748b; font-family: sans-serif;">Lembar Muka SPPD</span>
+        </td>
+      </tr>
+    </table>
 
     <!-- KOP SURAT RESMI GANDA -->
     <div class="kop-header">
-      <table class="kop-table">
-        <tr>
-          <td class="kop-logo-td">
-            <img src="${LOGO_KABUPATEN_KONAWE_BASE64}" alt="Logo Pemkab Konawe" class="kop-logo" />
+      <table class="kop-table" width="100%" align="center" style="border-collapse: collapse; border: none; width: 100%;">
+        <tr align="center" valign="middle">
+          <td align="center" valign="middle" style="width: 70px; min-width: 70px; max-width: 70px; padding: 0;">
+            <img src="${LOGO_KABUPATEN_KONAWE_BASE64}" alt="Logo Pemkab Konawe" class="kop-logo" style="width: 65px; max-width: 65px; height: auto; display: block; margin: 0 auto; object-fit: contain;" />
           </td>
-          <td class="kop-text-td">
-            <div class="kop-instansi">PEMERINTAH KABUPATEN KONAWE</div>
-            <div class="kop-dinas">DINAS PENDIDIKAN DAN KEBUDAYAAN</div>
-            <div class="kop-sekolah">${identitas.namaSekolah || 'SMP NEGERI 2 PURIALA'}</div>
-            <div class="kop-akreditasi">Terakreditasi "${identitas.akreditasi || 'B (Baik)'}"</div>
-            <div class="kop-alamat">Alamat: ${identitas.alamat || 'Jl. Poros Lambuya – Motaha Km.23 Kec. Puriala'}, Kode Pos: ${identitas.kodePos || '93462'}</div>
-            <div class="kop-kontak">NPSN: ${identitas.npsn || '40402805'} | Email: ${identitas.email || 'smpnpuriala523@gmail.com'}</div>
+          <td align="center" valign="middle" style="padding: 0 8px;">
+            <div class="kop-instansi" style="font-size: 12pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; margin: 0; line-height: 1.2;">PEMERINTAH KABUPATEN KONAWE</div>
+            <div class="kop-dinas" style="font-size: 13pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; margin: 2px 0; line-height: 1.2;">DINAS PENDIDIKAN DAN KEBUDAYAAN</div>
+            <div class="kop-sekolah" style="font-size: 15pt; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; margin: 2px 0 3px 0; line-height: 1.2;">${identitas.namaSekolah || 'SMP NEGERI 2 PURIALA'}</div>
+            <div class="kop-akreditasi" style="font-size: 9pt; font-weight: bold; margin: 1px 0; line-height: 1.2;">Terakreditasi "${identitas.akreditasi || 'B (Baik)'}"</div>
+            <div class="kop-alamat" style="font-size: 8.5pt; margin: 1px 0; line-height: 1.25;">Alamat: ${identitas.alamat || 'Jl. Poros Lambuya – Motaha Km.23 Kec. Puriala'}, Kode Pos: ${identitas.kodePos || '93462'}</div>
+            <div class="kop-kontak" style="font-size: 8pt; margin: 0; line-height: 1.25;">NPSN: ${identitas.npsn || '40402805'} | Email: ${identitas.email || 'smpnpuriala523@gmail.com'}</div>
           </td>
-          <td class="kop-logo-td">
-            <img src="${LOGO_TUT_WURI_BASE64}" alt="Logo Tut Wuri Handayani" class="kop-logo" />
+          <td align="center" valign="middle" style="width: 70px; min-width: 70px; max-width: 70px; padding: 0;">
+            <img src="${LOGO_TUT_WURI_BASE64}" alt="Logo Tut Wuri Handayani" class="kop-logo" style="width: 65px; max-width: 65px; height: auto; display: block; margin: 0 auto; object-fit: contain;" />
           </td>
         </tr>
       </table>
@@ -2429,13 +2454,18 @@ export function generateSuratTugasFullHtml(
     </div>
 
     <!-- SPPD Metadata Pojok Kanan Atas (Sheet SPPD HAL-1) -->
-    <div class="sppd-meta-box">
-      <table class="sppd-meta-table">
-        <tr><td>Lembar Ke</td><td>:</td><td>I / II</td></tr>
-        <tr><td>Kode No.</td><td>:</td><td>094</td></tr>
-        <tr><td>Nomor SPPD</td><td>:</td><td style="font-weight: bold;">${tugas.noSPPD || '094/024/SPPD/SMP.02/VII/2026'}</td></tr>
-      </table>
-    </div>
+    <table width="100%" style="width: 100%; border-collapse: collapse; border: none; margin-bottom: 4px;">
+      <tr>
+        <td style="width: 50%;"></td>
+        <td align="right" style="width: 50%;">
+          <table class="sppd-meta-table" style="border-collapse: collapse; font-size: 9.5pt; text-align: left; float: right;">
+            <tr><td style="padding: 1px 3px;">Lembar Ke</td><td style="padding: 1px 3px;">:</td><td style="padding: 1px 3px;">I / II</td></tr>
+            <tr><td style="padding: 1px 3px;">Kode No.</td><td style="padding: 1px 3px;">:</td><td style="padding: 1px 3px;">094</td></tr>
+            <tr><td style="padding: 1px 3px;">Nomor SPPD</td><td style="padding: 1px 3px;">:</td><td style="padding: 1px 3px; font-weight: bold;">${tugas.noSPPD || '094/024/SPPD/SMP.02/VII/2026'}</td></tr>
+          </table>
+        </td>
+      </tr>
+    </table>
 
     <!-- Judul SPPD -->
     <div class="judul-surat-box" style="margin-top: 2px; margin-bottom: 6px;">
@@ -2552,17 +2582,20 @@ export function generateSuratTugasFullHtml(
     </table>
 
     <!-- Tanda Tangan Pejabat Pembuat Komitmen / Kepala Sekolah (Sheet SPPD HAL-1) -->
-    <div class="ttd-wrapper" style="margin-top: 8px;">
-      <div class="ttd-box">
-        <div>Dikeluarkan di : ${tempatPenetapan}</div>
-        <div>Pada tanggal : ${tanggalFormat}</div>
-        <div style="margin-top: 3px; font-weight: bold;">Kepala Sekolah / Pejabat Berwenang,</div>
-        <div class="ttd-space"></div>
-        <div style="font-weight: bold; text-decoration: underline; text-transform: uppercase;">${kepsekNama}</div>
-        <div>${kepsekPangkat}</div>
-        <div>NIP. ${kepsekNip}</div>
-      </div>
-    </div>
+    <table width="100%" style="width: 100%; border-collapse: collapse; border: none; margin-top: 8px;">
+      <tr>
+        <td style="width: 55%;"></td>
+        <td align="center" style="width: 45%; text-align: center; font-size: 10pt; line-height: 1.3;">
+          <div>Dikeluarkan di : ${tempatPenetapan}</div>
+          <div>Pada tanggal : ${tanggalFormat}</div>
+          <div style="margin-top: 3px; font-weight: bold;">Kepala Sekolah / Pejabat Berwenang,</div>
+          <div style="height: 55px;"></div>
+          <div style="font-weight: bold; text-decoration: underline; text-transform: uppercase;">${kepsekNama}</div>
+          <div>${kepsekPangkat}</div>
+          <div>NIP. ${kepsekNip}</div>
+        </td>
+      </tr>
+    </table>
   </div>
   ` : ''}
 
@@ -2571,13 +2604,19 @@ export function generateSuratTugasFullHtml(
   <!-- GOOGLE DRIVE: Folder TATA USAHA/SURAT/SURAT KELUAR - File "SPPD"          -->
   <!-- SHEET 2: "SPPD HAL-2" (Format Lembar Belakang / Visum & Pengesahan)       -->
   <!-- ========================================================================= -->
-  <div class="document-page ${(showSPT || showSPPDHal1) ? 'page-break' : ''}">
-    <div class="no-print" style="margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
-      <span class="sheet-indicator" style="background-color: #fef3c7; color: #92400e; border-color: #fde68a;">
-        Google Drive SPPD • Sheet "SPPD HAL-2" (Halaman 2 - Lembar Belakang / Visum)
-      </span>
-      <span style="font-size: 8.5pt; color: #64748b; font-family: sans-serif;">Lembar Visum &amp; Catatan Kedatangan</span>
-    </div>
+  <div class="document-page" style="${sppdHal2Style}">
+    <table class="no-print" width="100%" style="width: 100%; border-collapse: collapse; border: none; margin-bottom: 8px;">
+      <tr>
+        <td align="left" valign="middle">
+          <span class="sheet-indicator" style="background-color: #fef3c7; color: #92400e; border-color: #fde68a;">
+            Google Drive SPPD • Sheet "SPPD HAL-2" (Halaman 2 - Lembar Belakang / Visum)
+          </span>
+        </td>
+        <td align="right" valign="middle">
+          <span style="font-size: 8.5pt; color: #64748b; font-family: sans-serif;">Lembar Visum &amp; Catatan Kedatangan</span>
+        </td>
+      </tr>
+    </table>
 
     <!-- Header Sheet SPPD HAL-2 -->
     <table class="sppd-hal2-header-table">
