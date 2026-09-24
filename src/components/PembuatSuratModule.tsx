@@ -52,6 +52,9 @@ import {
   JenisSuratTemplateOption,
   generateAutoNomorSurat,
   getHighestNomorUrutFromLists,
+  getHighestSequenceFromAgendaJson,
+  calculateNextSequence,
+  getNextSuratNumber,
   renderSuratDocumentHTML,
   downloadSuratAsWordDoc,
   downloadSuratAsHTML,
@@ -63,6 +66,7 @@ import {
   fetchArsipDokumenFiles,
   savePembuatSuratDataToDrive,
   loadPembuatSuratDataFromDrive,
+  loadBukuAgendaSuratKeluarFromDrive,
 } from '../services/googleDrive';
 
 const parsePembuatSuratFileName = (fileName: string, createdTime?: string) => {
@@ -196,6 +200,11 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [filterTarget, setFilterTarget] = useState<'semua' | 'siswa' | 'guru'>('semua');
   const [filterStatus, setFilterStatus] = useState<'semua' | 'Terbit' | 'Draft'>('semua');
+
+  // Track current sequence number for active form session
+  const [nextSequenceNum, setNextSequenceNum] = useState<number>(() => {
+    return getNextSuratNumber(suratKeluarList);
+  });
 
   // Google Drive Storage Sync States
   const [isScanningDriveBerkas, setIsScanningDriveBerkas] = useState(false);
@@ -737,16 +746,34 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
 
   // Helper to compute next sequential number across all modules and agendas
   const getNextNomorUrut = (): number => {
-    const highest = getHighestNomorUrutFromLists(suratList, suratKeluarList, suratTugasList, skKBMList, skTugasTambahanList);
-    return highest > 0 ? highest + 1 : (suratList.length + 1);
+    return getNextSuratNumber(suratKeluarList);
   };
 
   // Reset & Open Form for New Surat
-  const handleOpenNewForm = (presetTarget?: TargetSubjekSurat) => {
+  const handleOpenNewForm = async (presetTarget?: TargetSubjekSurat) => {
     const target = presetTarget || 'siswa';
     const firstTemplate = DAFTAR_TEMPLATE_SURAT.find((t) => t.target === target) || DAFTAR_TEMPLATE_SURAT[0];
     const initialKode = firstTemplate.kodeKlasifikasi || '421.3';
-    const nextIdx = getNextNomorUrut();
+    
+    // Default fallback sequence
+    let nextIdx = getNextNomorUrut();
+
+    // Scan Google Drive BUKU_AGENDA_SURAT_KELUAR.json if connected
+    if (googleToken && isGoogleConnected) {
+      try {
+        const agendaData = await loadBukuAgendaSuratKeluarFromDrive(googleToken);
+        if (agendaData) {
+          const highestJson = getHighestSequenceFromAgendaJson(agendaData);
+          const highestLocal = nextIdx - 1;
+          const maxHighest = Math.max(highestJson, highestLocal);
+          nextIdx = maxHighest > 0 ? maxHighest + 1 : 1;
+        }
+      } catch (err) {
+        console.warn('Gagal memindai BUKU_AGENDA_SURAT_KELUAR.json dari Drive:', err);
+      }
+    }
+
+    setNextSequenceNum(nextIdx);
     const autoNo = generateAutoNomorSurat(initialKode, nextIdx);
 
     setEditingSuratId(null);
@@ -863,7 +890,7 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
     setFormKodeKlasifikasi(initialKode);
     setFormPerihal(firstTemplate.defaultPerihal);
     setFormKeperluan(firstTemplate.defaultKeperluan);
-    setFormNoSurat(generateAutoNomorSurat(initialKode, getNextNomorUrut(), formTanggalSurat));
+    setFormNoSurat(generateAutoNomorSurat(initialKode, nextSequenceNum, formTanggalSurat));
     setFormSearchQuery('');
     setFormSelectedSubjek({
       nama: '',
@@ -880,14 +907,21 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
       setFormKodeKlasifikasi(code);
       setFormPerihal(tmpl.defaultPerihal);
       setFormKeperluan(tmpl.defaultKeperluan);
-      setFormNoSurat(generateAutoNomorSurat(code, getNextNomorUrut(), formTanggalSurat));
+      setFormNoSurat(generateAutoNomorSurat(code, nextSequenceNum, formTanggalSurat));
     }
   };
 
   // Handle classification code change
   const handleKodeKlasifikasiChange = (newKode: string) => {
     setFormKodeKlasifikasi(newKode);
-    const autoNo = generateAutoNomorSurat(newKode, getNextNomorUrut(), formTanggalSurat);
+    const autoNo = generateAutoNomorSurat(newKode, nextSequenceNum, formTanggalSurat);
+    setFormNoSurat(autoNo);
+  };
+
+  // Handle date change with real-time numbering recalculation
+  const handleTanggalSuratChange = (newDate: string) => {
+    setFormTanggalSurat(newDate);
+    const autoNo = generateAutoNomorSurat(formKodeKlasifikasi || selectedTemplate.kodeKlasifikasi, nextSequenceNum, newDate);
     setFormNoSurat(autoNo);
   };
 
@@ -987,7 +1021,7 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
 
     return {
       id: editingSuratId || `SURAT-GEN-${Date.now()}`,
-      noSurat: formNoSurat.trim() || generateAutoNomorSurat(effectiveKode, suratList.length + 1, formTanggalSurat),
+      noSurat: formNoSurat.trim() || generateAutoNomorSurat(effectiveKode, nextSequenceNum, formTanggalSurat),
       kodeKlasifikasi: effectiveKode,
       targetSubjek: formTarget,
       jenisSuratId: formJenisId,
@@ -2041,7 +2075,7 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
                         />
                         <button
                           type="button"
-                          onClick={() => setFormNoSurat(generateAutoNomorSurat(formKodeKlasifikasi || selectedTemplate.kodeKlasifikasi, suratList.length + 1, formTanggalSurat))}
+                          onClick={() => setFormNoSurat(generateAutoNomorSurat(formKodeKlasifikasi || selectedTemplate.kodeKlasifikasi, nextSequenceNum, formTanggalSurat))}
                           title="Generate Nomor Baru"
                           className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold border border-slate-300 transition"
                         >
@@ -2055,7 +2089,7 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
                       <input
                         type="date"
                         value={formTanggalSurat}
-                        onChange={(e) => setFormTanggalSurat(e.target.value)}
+                        onChange={(e) => handleTanggalSuratChange(e.target.value)}
                         className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
                     </div>

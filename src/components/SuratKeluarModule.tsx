@@ -48,6 +48,8 @@ import {
   findOrCreateSuratKeluarAgendaSheet,
 } from '../services/googleSheets';
 
+import { getNextSuratNumber } from '../utils/suratTemplates';
+
 interface SuratKeluarModuleProps {
   suratList: SuratKeluar[];
   onAdd: (surat: SuratKeluar) => void;
@@ -136,17 +138,7 @@ export const SuratKeluarModule: React.FC<SuratKeluarModuleProps> = ({
 
   // Auto numbering helper: computes the next number based on the highest existing number
   const getNextNumberStr = (): string => {
-    let maxNumber = 0;
-    suratList.forEach((s) => {
-      const match = (s.noAgenda || '').match(/^(\d+)/);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        if (!isNaN(num) && num > maxNumber) {
-          maxNumber = num;
-        }
-      }
-    });
-    const nextNum = maxNumber > 0 ? maxNumber + 1 : suratList.length + 1;
+    const nextNum = getNextSuratNumber(suratList);
     return String(nextNum).padStart(3, '0');
   };
 

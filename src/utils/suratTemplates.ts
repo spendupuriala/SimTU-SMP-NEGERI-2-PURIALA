@@ -236,40 +236,49 @@ export function extractNomorUrutFromNoSurat(noSurat: string | undefined | null):
   const trimmed = noSurat.trim();
   if (!trimmed) return null;
 
-  // 1. Bagi berdasarkan garis miring '/'
+  // Bagi berdasarkan garis miring '/'
   const parts = trimmed.split('/');
 
   if (parts.length >= 2) {
-    // Format [Kode]/[NomorUrut]/[Sekolah]... (contoh: 400.3.5.3/062/SMPN-02/PRL/2026 atau 090/062/SMP.02/ST/VII/2026)
+    // 1. Format standar: [Kode]/[NomorUrut]/[Sekolah]...
+    // Contoh: "400.3.5.3/077/SMP-02/PRL/SPT/IX/2026"
+    // Nomor urut selalu berada di segmen kedua (parts[1])
     const secondPart = parts[1].trim();
     if (/^\d{1,4}$/.test(secondPart)) {
       const num = parseInt(secondPart, 10);
-      if (!isNaN(num) && num > 0 && num < 1900) {
-        return num;
-      }
-    }
-
-    // Format [NomorUrut]/[Jenis]/[Tahun] (contoh: 062/SK/2026 atau 062/SM/2026)
-    const firstPart = parts[0].trim();
-    if (/^\d{1,4}$/.test(firstPart)) {
-      const num = parseInt(firstPart, 10);
-      if (!isNaN(num) && num > 0 && num < 1900) {
-        return num;
-      }
-    }
-  }
-
-  // 2. Cari seluruh angka berurutan yang bukan tahun (1900..2099)
-  const tokens = trimmed.match(/\b\d{1,4}\b/g);
-  if (tokens && tokens.length > 0) {
-    for (const token of tokens) {
-      const num = parseInt(token, 10);
-      if (!isNaN(num) && num > 0 && num < 1900) {
-        // Lewati prefix kode klasifikasi jika ada segmen nomor setelahnya
-        if (parts.length > 1 && parts[0].trim() === token && /^\d{1,4}$/.test(parts[1]?.trim() || '')) {
-          continue;
+      if (!isNaN(num) && num > 0) {
+        // Prevent matching common years or classification codes
+        if (num !== 2024 && num !== 2025 && num !== 2026 && num !== 2027) {
+          return num;
         }
-        return num;
+      }
+    }
+
+    // 2. Format Buku Agenda: [NomorUrut]/[TypeCode]/[Year]
+    // Contoh: "077/ST/2026" atau "077/SPPD/2026" atau "077/SK/2026"
+    // Nomor urut berada di segmen pertama (parts[0])
+    const firstPart = parts[0].trim();
+    const secondPartRaw = parts[1].trim();
+    if (/^\d{1,4}$/.test(firstPart) && !/^\d+$/.test(secondPartRaw)) {
+      const isKnownType = ['ST', 'SPPD', 'SK', 'SM', 'K', 'S', 'M'].includes(secondPartRaw.toUpperCase());
+      // Jika tipe dikenal ATAU memiliki tepat 3 segmen (misal 077/SK/2026)
+      if (isKnownType || parts.length === 3) {
+        const num = parseInt(firstPart, 10);
+        if (!isNaN(num) && num > 0) {
+          if (num !== 2024 && num !== 2025 && num !== 2026 && num !== 2027) {
+            return num;
+          }
+        }
+      }
+    }
+  } else {
+    // Format segmen tunggal (hanya angka murni, misal "077")
+    if (/^\d{1,4}$/.test(trimmed)) {
+      const num = parseInt(trimmed, 10);
+      if (!isNaN(num) && num > 0) {
+        if (num !== 2024 && num !== 2025 && num !== 2026 && num !== 2027) {
+          return num;
+        }
       }
     }
   }
@@ -288,17 +297,21 @@ export function getHighestNomorUrutFromLists(
   for (const list of sources) {
     if (!list || !Array.isArray(list)) continue;
     for (const item of list) {
-      let candidateNumber: string | undefined;
       if (typeof item === 'string') {
-        candidateNumber = item;
-      } else if (item && typeof item === 'object') {
-        candidateNumber = item.noSurat || item.noSuratTugas || item.noAgenda || item.noSK;
-      }
-
-      if (candidateNumber) {
-        const extracted = extractNomorUrutFromNoSurat(candidateNumber);
+        const extracted = extractNomorUrutFromNoSurat(item);
         if (extracted !== null && extracted > highest) {
           highest = extracted;
+        }
+      } else if (item && typeof item === 'object') {
+        const candidateKeys = ['noSurat', 'noSuratTugas', 'noSPPD', 'noAgenda', 'noSK'];
+        for (const key of candidateKeys) {
+          const val = item[key];
+          if (val && typeof val === 'string') {
+            const extracted = extractNomorUrutFromNoSurat(val);
+            if (extracted !== null && extracted > highest) {
+              highest = extracted;
+            }
+          }
         }
       }
     }
@@ -308,19 +321,153 @@ export function getHighestNomorUrutFromLists(
 }
 
 /**
+ * Ekstrak nomor urut tertinggi dari data JSON BUKU_AGENDA_SURAT_KELUAR.json
+ */
+export function getHighestSequenceFromAgendaJson(agendaJsonData: any): number {
+  if (!agendaJsonData) return 0;
+  
+  // Ambil array dari properti 'arsip' atau 'data' atau gunakan jika agendaJsonData itu sendiri adalah array
+  const arsipList = Array.isArray(agendaJsonData) 
+    ? agendaJsonData 
+    : (agendaJsonData.arsip || agendaJsonData.data || []);
+    
+  if (!Array.isArray(arsipList) || arsipList.length === 0) return 0;
+  
+  let highest = 0;
+  
+  for (const item of arsipList) {
+    if (!item || typeof item !== 'object') continue;
+    
+    // 1. Ekstrak dari noAgenda
+    const noAgenda = item.noAgenda;
+    if (noAgenda && typeof noAgenda === 'string') {
+      const match = noAgenda.match(/\d+/);
+      if (match) {
+        const num = parseInt(match[0], 10);
+        if (!isNaN(num) && num > highest) {
+          highest = num;
+        }
+      }
+    }
+    
+    // 2. Ekstrak dari noSurat
+    const noSurat = item.noSurat;
+    if (noSurat && typeof noSurat === 'string') {
+      // Regex presisi mencari 3 digit di antara slash pertama dan kedua
+      const match = noSurat.match(/\/(\d{3})\//);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num > highest) {
+          highest = num;
+        }
+      } else {
+        // Fallback jika tidak standar, gunakan logic lama
+        const num = extractNomorUrutFromNoSurat(noSurat);
+        if (num !== null && num > highest) {
+          highest = num;
+        }
+      }
+    }
+  }
+  
+  return highest;
+}
+
+/**
+ * Pure function to calculate the next sequence number.
+ * If there are no records, it starts at 1.
+ * Otherwise, it finds the highest numeric sequence number in the provided list and adds 1.
+ */
+export function calculateNextSequence(
+  listSurat: Array<string | { noSurat?: string; noSuratTugas?: string; noSPPD?: string; noAgenda?: string; noSK?: string; [key: string]: any }> | undefined
+): number {
+  if (!listSurat || !Array.isArray(listSurat) || listSurat.length === 0) {
+    return 1;
+  }
+
+  let highest = 0;
+
+  for (const item of listSurat) {
+    if (!item) continue;
+    
+    if (typeof item === 'string') {
+      const extracted = extractNomorUrutFromNoSurat(item);
+      if (extracted !== null && extracted > highest) {
+        highest = extracted;
+      }
+    } else if (typeof item === 'object') {
+      const candidateKeys = ['noSurat', 'noSuratTugas', 'noSPPD', 'noAgenda', 'noSK'];
+      for (const key of candidateKeys) {
+        const val = item[key];
+        if (val && typeof val === 'string') {
+          const extracted = extractNomorUrutFromNoSurat(val);
+          if (extracted !== null && extracted > highest) {
+            highest = extracted;
+          }
+        }
+      }
+    }
+  }
+
+  return highest > 0 ? highest + 1 : 1;
+}
+
+/**
+ * Helper terpusat untuk mencari nomor urut tertinggi dari seluruh daftar Surat Keluar
+ * dan mengembalikan nomor berikutnya (nomor urut tertinggi + 1).
+ * Jika kosong, mengembalikan 1.
+ */
+export function getNextSuratNumber(suratKeluarList: Array<any> | undefined): number {
+  if (!suratKeluarList || !Array.isArray(suratKeluarList) || suratKeluarList.length === 0) {
+    return 1;
+  }
+
+  let maxNumber = 0;
+
+  for (const item of suratKeluarList) {
+    if (!item) continue;
+    
+    // Ambil noSurat, noAgenda, noSuratTugas, noSPPD, atau noSK
+    const fieldsToTry = ['noSurat', 'noAgenda', 'noSuratTugas', 'noSPPD', 'noSK'];
+    for (const field of fieldsToTry) {
+      const val = typeof item === 'object' ? item[field] : (typeof item === 'string' ? item : null);
+      if (val && typeof val === 'string') {
+        const extracted = extractNomorUrutFromNoSurat(val);
+        if (extracted !== null && extracted > maxNumber) {
+          maxNumber = extracted;
+        }
+      }
+    }
+    
+    // Jika item sendiri adalah string
+    if (typeof item === 'string') {
+      const extracted = extractNomorUrutFromNoSurat(item);
+      if (extracted !== null && extracted > maxNumber) {
+        maxNumber = extracted;
+      }
+    }
+  }
+
+  return maxNumber > 0 ? maxNumber + 1 : 1;
+}
+
+/**
  * Generator nomor surat dinas otomatis yang rapi, standar, dan selalu menyesuaikan nomor terakhir
  * Contoh output: 400.3.5.3/063/SMPN-02/PRL/2026
  */
 export function generateAutoNomorSurat(
   kodeKlasifikasi: string,
   indexUrut: number,
-  tanggal: string = new Date().toISOString().split('T')[0]
+  tanggal: string = new Date().toISOString().split('T')[0],
+  jenisSurat: string = 'SK'
 ): string {
   const dateObj = new Date(tanggal || Date.now());
   const year = dateObj.getFullYear();
+  const monthIndex = isNaN(dateObj.getTime()) ? new Date().getMonth() : dateObj.getMonth();
+  const curMonthRoman = getRomanMonth(monthIndex);
   const padIndex = String(indexUrut).padStart(3, '0');
 
-  return `${kodeKlasifikasi}/${padIndex}/SMPN-02/PRL/${year}`;
+  return `${kodeKlasifikasi}/${padIndex}/SMP-02/PRL/${jenisSurat}/${curMonthRoman}/${year}`;
 }
 
 /**

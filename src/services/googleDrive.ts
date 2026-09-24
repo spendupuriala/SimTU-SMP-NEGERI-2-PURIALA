@@ -2421,6 +2421,41 @@ export const loadPembuatSuratDataFromDrive = async (
 };
 
 /**
+ * Load Buku Agenda Surat Keluar directly from Google Drive JSON in TATA USAHA/02_SURAT_KELUAR
+ */
+export const loadBukuAgendaSuratKeluarFromDrive = async (
+  accessToken: string
+): Promise<any | null> => {
+  if (!accessToken) return null;
+  try {
+    const skFolderId = await findOrCreateSuratKeluarFolder(accessToken);
+    const fileName = 'BUKU_AGENDA_SURAT_KELUAR.json';
+    const checkQuery = `name = '${fileName}' and '${skFolderId}' in parents and trashed = false`;
+    const checkRes = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: checkQuery, fields: 'files(id)' }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    if (checkRes.ok) {
+      const checkData = await checkRes.json();
+      if (checkData.files && checkData.files.length > 0) {
+        const fileId = checkData.files[0].id;
+        const contentRes = await fetch(`${DRIVE_API_URL}/files/${fileId}?alt=media`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (contentRes.ok) {
+          return await contentRes.json();
+        }
+      }
+    }
+    return null;
+  } catch (error: any) {
+    console.warn('Error loading Buku Agenda Surat Keluar from Google Drive:', error?.message || error);
+    return null;
+  }
+};
+
+/**
  * Helper to format byte sizes into readable string
  */
 function formatBytes(bytes: number, decimals: number = 2): string {

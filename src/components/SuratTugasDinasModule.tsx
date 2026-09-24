@@ -52,7 +52,7 @@ import {
   LOGO_TUT_WURI_BASE64,
   terbilangHari,
 } from '../utils/skTemplates';
-import { getHighestNomorUrutFromLists, getRomanMonth } from '../utils/suratTemplates';
+import { getHighestNomorUrutFromLists, getRomanMonth, getHighestSequenceFromAgendaJson, calculateNextSequence, getNextSuratNumber } from '../utils/suratTemplates';
 import html2pdf from 'html2pdf.js';
 import {
   findSuratTugasTemplateInDrive,
@@ -63,6 +63,7 @@ import {
   fetchArsipDokumenFiles,
   saveSuratTugasDataToDrive,
   loadSuratTugasDataFromDrive,
+  loadBukuAgendaSuratKeluarFromDrive,
 } from '../services/googleDrive';
 
 const parseSuratTugasFileName = (fileName: string, createdTime?: string) => {
@@ -180,6 +181,11 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<SuratTugasDinas | null>(null);
   const [suratToDelete, setSuratToDelete] = useState<SuratTugasDinas | null>(null);
+  
+  // Track current sequence number for active form session
+  const [nextSequenceNum, setNextSequenceNum] = useState<number>(() => {
+    return getNextSuratNumber(suratKeluarList);
+  });
 
   // Print & Preview State
   const [selectedForPrint, setSelectedForPrint] = useState<SuratTugasDinas | null>(null);
@@ -412,21 +418,21 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
   };
 
   const getNextNomorUrut = (): number => {
-    const highest = getHighestNomorUrutFromLists(tugasList, suratKeluarList, pembuatSuratList, skKBMList, skTugasTambahanList);
-    return highest > 0 ? highest + 1 : (tugasList.length + 1);
+    return getNextSuratNumber(suratKeluarList);
   };
 
-  const getSptAndSppdNumbers = () => {
-    const sptUrut = getNextNomorUrut();
-    const sppdUrut = sptUrut + 1;
+  const getSptAndSppdNumbers = (seqOverride?: number) => {
+    const startSeq = seqOverride !== undefined ? seqOverride : nextSequenceNum;
+    const sptUrut = startSeq;
+    const sppdUrut = startSeq + 1;
     return {
       sptNum: String(sptUrut).padStart(3, '0'),
       sppdNum: String(sppdUrut).padStart(3, '0')
     };
   };
 
-  const generateSptSppdNumbers = (kode: string, dateStr?: string) => {
-    const { sptNum, sppdNum } = getSptAndSppdNumbers();
+  const generateSptSppdNumbers = (kode: string, dateStr?: string, seqOverride?: number) => {
+    const { sptNum, sppdNum } = getSptAndSppdNumbers(seqOverride);
     const date = dateStr ? new Date(dateStr) : new Date();
     const monthIndex = isNaN(date.getTime()) ? new Date().getMonth() : date.getMonth();
     const curMonthRoman = getRomanMonth(monthIndex);
@@ -526,10 +532,32 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
     }));
   };
 
-  const handleOpenAdd = () => {
+  const handleOpenAdd = async () => {
     setEditingItem(null);
     const todayStr = new Date().toISOString().split('T')[0];
-    const { noSuratTugas, noSPPD } = generateSptSppdNumbers('090', todayStr);
+    
+    // Default fallback sequence using local records
+    let sptUrut = getNextNomorUrut();
+
+    // Scan Google Drive BUKU_AGENDA_SURAT_KELUAR.json if connected
+    if (googleToken && isGoogleConnected) {
+      try {
+        const agendaData = await loadBukuAgendaSuratKeluarFromDrive(googleToken);
+        if (agendaData) {
+          const highestJson = getHighestSequenceFromAgendaJson(agendaData);
+          const highestLocal = sptUrut - 1;
+          const maxHighest = Math.max(highestJson, highestLocal);
+          sptUrut = maxHighest > 0 ? maxHighest + 1 : 1;
+        }
+      } catch (err) {
+        console.warn('Gagal memindai BUKU_AGENDA_SURAT_KELUAR.json dari Drive:', err);
+      }
+    }
+
+    setNextSequenceNum(sptUrut);
+
+    const { noSuratTugas, noSPPD } = generateSptSppdNumbers('090', todayStr, sptUrut);
+    
     setFormData({
       kodeKlasifikasi: '090',
       noSuratTugas,
