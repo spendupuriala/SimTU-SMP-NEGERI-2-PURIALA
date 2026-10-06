@@ -512,6 +512,18 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
   const [formGajiPokok, setFormGajiPokok] = useState<string>('3.500.000');
   const [formPenghasilanTotal, setFormPenghasilanTotal] = useState<string>('4.850.000');
 
+  // Fields for Surat Pemberitahuan Skorsing Siswa
+  const [formAlasanSkorsing, setFormAlasanSkorsing] = useState<string>('');
+  const [formLamaSkorsing, setFormLamaSkorsing] = useState<string>('');
+  const [formTglMulaiSkorsing, setFormTglMulaiSkorsing] = useState<string>('');
+  const [formTglSelesaiSkorsing, setFormTglSelesaiSkorsing] = useState<string>('');
+  const [formTglKembaliSekolah, setFormTglKembaliSekolah] = useState<string>('');
+  const [formTugasSelamaSkorsing, setFormTugasSelamaSkorsing] = useState<string>('');
+  const [formNamaWakasekKesiswaan, setFormNamaWakasekKesiswaan] = useState<string>('DISNAWATI, S.Pd.');
+  const [formNipWakasekKesiswaan, setFormNipWakasekKesiswaan] = useState<string>('19780815 200604 2 018');
+  const [formNamaWaliKelas, setFormNamaWaliKelas] = useState<string>('');
+  const [formNipWaliKelas, setFormNipWaliKelas] = useState<string>('');
+
   // Penandatangan Form Fields
   const [formPenandatanganTipe, setFormPenandatanganTipe] = useState<PenandatanganTipe>('kepala_sekolah');
   const [formPenandatanganNama, setFormPenandatanganNama] = useState<string>(identitasSekolah.namaKepalaSekolah || 'ADRIS, S.Pd.,M.Si');
@@ -804,6 +816,18 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
     setFormGajiPokok('3.500.000');
     setFormPenghasilanTotal('4.850.000');
     
+    // Reset skorsing fields
+    setFormAlasanSkorsing('');
+    setFormLamaSkorsing('');
+    setFormTglMulaiSkorsing('');
+    setFormTglSelesaiSkorsing('');
+    setFormTglKembaliSekolah('');
+    setFormTugasSelamaSkorsing('');
+    setFormNamaWakasekKesiswaan('DISNAWATI, S.Pd.');
+    setFormNipWakasekKesiswaan('19780815 200604 2 018');
+    setFormNamaWaliKelas('');
+    setFormNipWaliKelas('');
+    
     // Dynamic Principal lookup from PTK database
     const principalPTK = getStructuralPTKByTipe('kepala_sekolah');
     setFormPenandatanganTipe('kepala_sekolah');
@@ -847,6 +871,18 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
     setFormProgramStudi(surat.detailSurat.programStudiKegiatan || '');
     setFormGajiPokok(surat.detailSurat.gajiPokok || '3.500.000');
     setFormPenghasilanTotal(surat.detailSurat.penghasilanTotal || '4.850.000');
+    
+    // Load skorsing fields
+    setFormAlasanSkorsing(surat.detailSurat.alasanSkorsing || '');
+    setFormLamaSkorsing(surat.detailSurat.lamaSkorsing || '');
+    setFormTglMulaiSkorsing(surat.detailSurat.tglMulaiSkorsing || '');
+    setFormTglSelesaiSkorsing(surat.detailSurat.tglSelesaiSkorsing || '');
+    setFormTglKembaliSekolah(surat.detailSurat.tglKembaliSekolah || '');
+    setFormTugasSelamaSkorsing(surat.detailSurat.tugasSelamaSkorsing || '');
+    setFormNamaWakasekKesiswaan(surat.detailSurat.namaWakasekKesiswaan || 'DISNAWATI, S.Pd.');
+    setFormNipWakasekKesiswaan(surat.detailSurat.nipWakasekKesiswaan || '19780815 200604 2 018');
+    setFormNamaWaliKelas(surat.detailSurat.namaWaliKelas || '');
+    setFormNipWaliKelas(surat.detailSurat.nipWaliKelas || '');
     setFormPenandatanganTipe(surat.penandatangan.tipe);
     setFormPenandatanganNama(surat.penandatangan.nama);
     setFormPenandatanganNip(surat.penandatangan.nip);
@@ -1047,6 +1083,16 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
         programStudiKegiatan: formProgramStudi,
         gajiPokok: formGajiPokok,
         penghasilanTotal: formPenghasilanTotal,
+        alasanSkorsing: formAlasanSkorsing,
+        lamaSkorsing: formLamaSkorsing,
+        tglMulaiSkorsing: formTglMulaiSkorsing,
+        tglSelesaiSkorsing: formTglSelesaiSkorsing,
+        tglKembaliSekolah: formTglKembaliSekolah,
+        tugasSelamaSkorsing: formTugasSelamaSkorsing,
+        namaWakasekKesiswaan: formNamaWakasekKesiswaan,
+        nipWakasekKesiswaan: formNipWakasekKesiswaan,
+        namaWaliKelas: formNamaWaliKelas,
+        nipWaliKelas: formNipWaliKelas,
       },
       penandatangan: {
         tipe: formPenandatanganTipe,
@@ -2152,6 +2198,123 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
                             placeholder="Mengikuti domisili / mutasi kerja orang tua"
                             className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
                           />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {formJenisId === 'pemberitahuan_skorsing_siswa' && (
+                    <div className="p-4 bg-rose-50/60 rounded-xl border border-rose-200 space-y-4">
+                      <div className="text-xs font-bold text-rose-900">Rincian Khusus Sanksi Skorsing Siswa</div>
+                      
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-slate-700 mb-1">Alasan Sanksi / Bentuk Pelanggaran *</label>
+                          <input
+                            type="text"
+                            value={formAlasanSkorsing}
+                            onChange={(e) => setFormAlasanSkorsing(e.target.value)}
+                            placeholder="Melakukan pelanggaran tata tertib kategori berat"
+                            className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-slate-700 mb-1">Lama Masa Skorsing *</label>
+                          <input
+                            type="text"
+                            value={formLamaSkorsing}
+                            onChange={(e) => setFormLamaSkorsing(e.target.value)}
+                            placeholder="3 (Tiga) Hari Efektif Belajar"
+                            className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-slate-700 mb-1">Tanggal Mulai Skorsing *</label>
+                          <input
+                            type="date"
+                            value={formTglMulaiSkorsing}
+                            onChange={(e) => setFormTglMulaiSkorsing(e.target.value)}
+                            className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-slate-700 mb-1">Tanggal Selesai Skorsing *</label>
+                          <input
+                            type="date"
+                            value={formTglSelesaiSkorsing}
+                            onChange={(e) => setFormTglSelesaiSkorsing(e.target.value)}
+                            className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-slate-700 mb-1">Tanggal Kembali Sekolah *</label>
+                          <input
+                            type="date"
+                            value={formTglKembaliSekolah}
+                            onChange={(e) => setFormTglKembaliSekolah(e.target.value)}
+                            className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">Kewajiban Tugas Akademik Selama Skorsing</label>
+                        <input
+                          type="text"
+                          value={formTugasSelamaSkorsing}
+                          onChange={(e) => setFormTugasSelamaSkorsing(e.target.value)}
+                          placeholder="Menyelesaikan seluruh tugas mandiri mata pelajaran dan membuat surat pernyataan pembinaan bermaterai"
+                          className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+
+                      <div className="border-t border-rose-200/60 pt-3 space-y-3">
+                        <div className="text-[11px] font-semibold text-rose-800">Data Penandatangan Tambahan (Format 3 TTD)</div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-medium text-slate-700 mb-1">Nama Wakasek Kesiswaan</label>
+                            <input
+                              type="text"
+                              value={formNamaWakasekKesiswaan}
+                              onChange={(e) => setFormNamaWakasekKesiswaan(e.target.value)}
+                              className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-700 mb-1">NIP Wakasek Kesiswaan</label>
+                            <input
+                              type="text"
+                              value={formNipWakasekKesiswaan}
+                              onChange={(e) => setFormNipWakasekKesiswaan(e.target.value)}
+                              className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-medium text-slate-700 mb-1">Nama Guru Wali Kelas</label>
+                            <input
+                              type="text"
+                              value={formNamaWaliKelas}
+                              onChange={(e) => setFormNamaWaliKelas(e.target.value)}
+                              placeholder="Contoh: Dra. Sitti Rahma"
+                              className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-700 mb-1">NIP Wali Kelas (Opsional)</label>
+                            <input
+                              type="text"
+                              value={formNipWaliKelas}
+                              onChange={(e) => setFormNipWaliKelas(e.target.value)}
+                              placeholder="NIP. 19xxxxxxxxxxxxxx"
+                              className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
                         </div>
                       </div>
                     </div>

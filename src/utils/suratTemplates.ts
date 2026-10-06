@@ -555,6 +555,71 @@ export function renderTandaTanganHTML(surat: PembuatSuratRecord, sekolah: Identi
   const nipPejabat = p.nip || sekolah.nipKepalaSekolah || '19710110 199412 1 0012';
   const pangkatPejabat = p.pangkatGol || sekolah.pangkatKepsek || 'Pembina Tk. I, IV/b';
 
+  if (surat.jenisSuratId === 'pemberitahuan_skorsing_siswa') {
+    const det = surat.detailSurat;
+    const namaWakasek = det.namaWakasekKesiswaan || 'DISNAWATI, S.Pd.';
+    const nipWakasek = det.nipWakasekKesiswaan ? `NIP. ${det.nipWakasekKesiswaan}` : 'NIP. 19780815 200604 2 018';
+    const namaWali = det.namaWaliKelas || '_______________________';
+    const nipWali = det.nipWaliKelas ? `NIP. ${det.nipWaliKelas}` : 'NIP. ___________________';
+
+    return `
+      <div style="margin-top: 15px; width: 100%; font-family: 'Times New Roman', Times, serif; font-size: 11pt; color: #000000; line-height: 1.25;">
+        <!-- Baris Atas: Wakasek Kesiswaan & Guru Wali Siswa -->
+        <table style="width: 100%; border-collapse: collapse; border: none; margin-bottom: 15px;">
+          <tr>
+            <td style="width: 50%; vertical-align: top; text-align: center; padding: 0;">
+              <div>Wakasek Kesiswaan,</div>
+              <div style="height: 48px;"></div>
+              <div style="font-weight: bold; text-decoration: underline; text-transform: uppercase;">
+                ${namaWakasek}
+              </div>
+              <div style="font-size: 9.5pt; margin-top: 1px;">
+                ${nipWakasek}
+              </div>
+            </td>
+            <td style="width: 50%; vertical-align: top; text-align: center; padding: 0;">
+              <div>${tempat}, ${tglIndo}</div>
+              <div>Guru Wali Kelas,</div>
+              <div style="height: 48px;"></div>
+              <div style="font-weight: bold; text-decoration: underline; text-transform: uppercase;">
+                ${namaWali}
+              </div>
+              <div style="font-size: 9.5pt; margin-top: 1px;">
+                ${nipWali}
+              </div>
+            </td>
+          </tr>
+        </table>
+
+        <!-- Baris Bawah: Mengetahui, Kepala Sekolah -->
+        <table style="width: 100%; border-collapse: collapse; border: none;">
+          <tr>
+            <td align="center" style="width: 100%; vertical-align: top; text-align: center; padding: 0;">
+              <div>Mengetahui,</div>
+              <div style="font-weight: bold;">Kepala Sekolah,</div>
+              <div style="height: 48px;"></div>
+              <div style="font-weight: bold; text-decoration: underline; text-transform: uppercase;">
+                ${namaPejabat}
+              </div>
+              <div style="font-size: 9.5pt; margin-top: 2px;">
+                ${pangkatPejabat ? pangkatPejabat : ''}
+              </div>
+              <div style="font-size: 9.5pt; margin-top: 1px;">
+                NIP. ${nipPejabat}
+              </div>
+            </td>
+          </tr>
+        </table>
+        
+        ${surat.status === 'Draft' ? `
+        <div style="font-size: 9pt; font-style: italic; color: #dc2626; text-align: center; margin-top: 10px;">
+          <span style="border: 1px dashed #ef4444; padding: 2px 6px; border-radius: 4px; font-style: normal; font-weight: bold;">[ DRAFT DOKUMEN BELUM DITERBITKAN ]</span>
+        </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
   return `
     <div style="margin-top: 35px; width: 100%; font-family: 'Times New Roman', Times, serif; font-size: 12pt; color: #000000;">
       <table style="width: 100%; border-collapse: collapse; border: none;">
@@ -727,34 +792,34 @@ export function renderIsiSuratHTML(surat: PembuatSuratRecord, sekolah: Identitas
       const tglSelesaiSkors = det.tglSelesaiSkorsing ? formatTanggalIndonesia(det.tglSelesaiSkorsing) : 'Selesai Masa Sanksi';
       const tglKembali = det.tglKembaliSekolah ? formatTanggalIndonesia(det.tglKembaliSekolah) : 'Hari Kerja Berikutnya';
       specificContent = `
-        <p style="text-align: justify; line-height: 1.5; margin: 12px 0;">
+        <p style="text-align: justify; line-height: 1.35; margin: 6px 0; font-size: 11pt;">
           Menindaklanjuti hasil rapat dewan guru, catatan pelanggaran tata tertib, serta rekomendasi Tim Ketertiban dan Guru Bimbingan Konseling (BK) ${sekolah.namaSekolah}, dengan ini Kepala Sekolah menyampaikan <strong>KEPUTUSAN SANKSI SKORSING (PEMBELAJARAN MANDIRI DI RUMAH)</strong> kepada peserta didik tersebut di atas dengan ketentuan sebagai berikut:
         </p>
-        <table style="width: 100%; border-collapse: collapse; margin: 8px 0 12px 0; font-size: 12pt;">
+        <table style="width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 11pt; line-height: 1.35;">
           <tr>
-            <td style="width: 28%; padding: 3px 0; vertical-align: top;">Alasan Sanksi</td>
-            <td style="width: 3%; padding: 3px 0; vertical-align: top;">:</td>
-            <td style="width: 69%; padding: 3px 0; font-weight: bold; color: #b91c1c;">${det.alasanSkorsing || det.bentukPelanggaran || det.keperluan || 'Melakukan pelanggaran tata tertib kategori berat setelah tahapan teguran'}</td>
+            <td style="width: 28%; padding: 2px 0; vertical-align: top;">Alasan Sanksi</td>
+            <td style="width: 3%; padding: 2px 0; vertical-align: top;">:</td>
+            <td style="width: 69%; padding: 2px 0; font-weight: bold; color: #b91c1c;">${det.alasanSkorsing || det.bentukPelanggaran || det.keperluan || 'Melakukan pelanggaran tata tertib kategori berat setelah tahapan teguran'}</td>
           </tr>
           <tr>
-            <td style="padding: 3px 0; vertical-align: top;">Lama Masa Skorsing</td>
-            <td style="padding: 3px 0; vertical-align: top;">:</td>
-            <td style="padding: 3px 0; font-weight: bold;">${det.lamaSkorsing || '3 (Tiga) Hari Efektif Belajar'}</td>
+            <td style="padding: 2px 0; vertical-align: top;">Lama Masa Skorsing</td>
+            <td style="padding: 2px 0; vertical-align: top;">:</td>
+            <td style="padding: 2px 0; font-weight: bold;">${det.lamaSkorsing || '3 (Tiga) Hari Efektif Belajar'}</td>
           </tr>
           <tr>
-            <td style="padding: 3px 0; vertical-align: top;">Terhitung Mulai</td>
-            <td style="padding: 3px 0; vertical-align: top;">:</td>
-            <td style="padding: 3px 0;">${tglMulaiSkors} s.d. ${tglSelesaiSkors}</td>
+            <td style="padding: 2px 0; vertical-align: top;">Terhitung Mulai</td>
+            <td style="padding: 2px 0; vertical-align: top;">:</td>
+            <td style="padding: 2px 0;">${tglMulaiSkors} s.d. ${tglSelesaiSkors}</td>
           </tr>
           <tr>
-            <td style="padding: 3px 0; vertical-align: top;">Kembali Masuk Sekolah</td>
-            <td style="padding: 3px 0; vertical-align: top;">:</td>
-            <td style="padding: 3px 0; font-weight: bold; color: #0369a1;">${tglKembali} (Wajib Didampingi Orang Tua / Wali)</td>
+            <td style="padding: 2px 0; vertical-align: top;">Kembali Masuk Sekolah</td>
+            <td style="padding: 2px 0; vertical-align: top;">:</td>
+            <td style="padding: 2px 0; font-weight: bold; color: #0369a1;">${tglKembali} (Wajib Didampingi Orang Tua / Wali)</td>
           </tr>
         </table>
-        <div style="background-color: #f8fafc; border-left: 4px solid #e11d48; padding: 10px 12px; margin: 10px 0;">
-          <div style="font-weight: bold; margin-bottom: 4px; font-size: 11pt;">Kewajiban Peserta Didik Selama Masa Skorsing:</div>
-          <ol style="margin: 0; padding-left: 20px; font-size: 11pt; line-height: 1.4;">
+        <div style="background-color: #f8fafc; border-left: 4px solid #e11d48; padding: 8px 10px; margin: 6px 0;">
+          <div style="font-weight: bold; margin-bottom: 2px; font-size: 11pt;">Kewajiban Peserta Didik Selama Masa Skorsing:</div>
+          <ol style="margin: 0; padding-left: 18px; font-size: 10.5pt; line-height: 1.3;">
             <li>Tidak diperkenankan berada di lingkungan sekolah selama jam pembelajaran tanpa izin tertulis dari Pimpinan Sekolah.</li>
             <li>Wajib belajar mandiri di rumah di bawah bimbingan dan pengawasan penuh Orang Tua / Wali.</li>
             <li>Wajib menyelesaikan tugas akademik: <strong>${det.tugasSelamaSkorsing || 'Menyelesaikan seluruh tugas mandiri mata pelajaran dan membuat surat pernyataan pembinaan bermaterai'}</strong>.</li>
@@ -1036,6 +1101,12 @@ export function renderSuratDocumentHTML(surat: PembuatSuratRecord, sekolah: Iden
   const isi = renderIsiSuratHTML(surat, sekolah);
   const ttd = renderTandaTanganHTML(surat, sekolah);
 
+  const isSkorsing = surat.jenisSuratId === 'pemberitahuan_skorsing_siswa';
+  const pageMargin = isSkorsing ? '20mm 20mm 20mm 20mm' : '20mm 20mm 20mm 25mm';
+  const fontSize = isSkorsing ? '11pt' : '12pt';
+  const lineHeight = isSkorsing ? '1.25' : '1.4';
+  const containerPadding = isSkorsing ? '2cm 2cm 2cm 2cm' : '2.5cm 2cm 2cm 2.5cm';
+
   return `
 <!DOCTYPE html>
 <html lang="id">
@@ -1045,12 +1116,12 @@ export function renderSuratDocumentHTML(surat: PembuatSuratRecord, sekolah: Iden
   <style>
     @page {
       size: A4 portrait;
-      margin: 20mm 20mm 20mm 25mm; /* Atas (Top): 20mm, Kanan (Right): 20mm, Bawah (Bottom): 20mm, Kiri (Left): 25mm */
+      margin: ${pageMargin};
     }
     body {
       font-family: 'Times New Roman', Times, serif;
-      font-size: 12pt;
-      line-height: 1.4;
+      font-size: ${fontSize};
+      line-height: ${lineHeight};
       color: #000000;
       background-color: #ffffff;
       margin: 0;
@@ -1063,12 +1134,13 @@ export function renderSuratDocumentHTML(surat: PembuatSuratRecord, sekolah: Iden
       width: 210mm; /* A4 Standard Width */
       min-height: 297mm; /* A4 Standard Height */
       margin: 0 auto;
-      padding: 2.5cm 2cm 2cm 2.5cm; /* Atas: 2.5cm, Kanan: 2cm, Bawah: 2cm, Kiri: 2.5cm */
+      padding: ${containerPadding};
       box-sizing: border-box;
       background: #ffffff;
       overflow: visible;
       word-wrap: break-word;
       overflow-wrap: break-word;
+      ${isSkorsing ? 'page-break-inside: avoid !important; break-inside: avoid !important;' : ''}
     }
     .kop-surat, .isi-surat, .ttd-area, p, table, td, div {
       overflow: visible;

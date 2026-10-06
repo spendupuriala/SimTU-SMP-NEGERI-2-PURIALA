@@ -427,6 +427,10 @@ export interface PembuatSuratDetail {
   tglSelesaiSkorsing?: string;
   tglKembaliSekolah?: string;
   tugasSelamaSkorsing?: string;
+  namaWakasekKesiswaan?: string;
+  nipWakasekKesiswaan?: string;
+  namaWaliKelas?: string;
+  nipWaliKelas?: string;
 }
 
 export interface PembuatSuratPenandatangan {
