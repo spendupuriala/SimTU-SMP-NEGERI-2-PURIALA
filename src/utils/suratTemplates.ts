@@ -1102,10 +1102,13 @@ export function renderSuratDocumentHTML(surat: PembuatSuratRecord, sekolah: Iden
   const ttd = renderTandaTanganHTML(surat, sekolah);
 
   const isSkorsing = surat.jenisSuratId === 'pemberitahuan_skorsing_siswa';
-  const pageMargin = isSkorsing ? '20mm 20mm 20mm 20mm' : '20mm 20mm 20mm 25mm';
+  const pageMargin = isSkorsing ? '20mm' : '20mm 20mm 20mm 25mm';
+  const pageSize = isSkorsing ? '215mm 330mm' : 'A4 portrait';
+  const containerWidth = isSkorsing ? '215mm' : '210mm';
+  const containerMinHeight = isSkorsing ? '330mm' : '297mm';
   const fontSize = isSkorsing ? '11pt' : '12pt';
   const lineHeight = isSkorsing ? '1.25' : '1.4';
-  const containerPadding = isSkorsing ? '2cm 2cm 2cm 2cm' : '2.5cm 2cm 2cm 2.5cm';
+  const containerPadding = isSkorsing ? '2cm' : '2.5cm 2cm 2cm 2.5cm';
 
   return `
 <!DOCTYPE html>
@@ -1115,7 +1118,7 @@ export function renderSuratDocumentHTML(surat: PembuatSuratRecord, sekolah: Iden
   <title>${surat.jenisSuratNama} - ${surat.subjekData.nama}</title>
   <style>
     @page {
-      size: A4 portrait;
+      size: ${pageSize};
       margin: ${pageMargin};
     }
     body {
@@ -1131,8 +1134,8 @@ export function renderSuratDocumentHTML(surat: PembuatSuratRecord, sekolah: Iden
       overflow: visible;
     }
     .page-container {
-      width: 210mm; /* A4 Standard Width */
-      min-height: 297mm; /* A4 Standard Height */
+      width: ${containerWidth};
+      min-height: ${containerMinHeight};
       margin: 0 auto;
       padding: ${containerPadding};
       box-sizing: border-box;
