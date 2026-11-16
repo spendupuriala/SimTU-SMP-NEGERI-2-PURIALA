@@ -1965,19 +1965,15 @@ export function generateSuratTugasFullHtml(
   const showSPPDHal1 = mode === 'sppd_only' || mode === 'sppd_hal1' || mode === 'all';
   const showSPPDHal2 = mode === 'sppd_only' || mode === 'sppd_hal2' || mode === 'all';
 
-  // Page break and display styles optimized for Google Apps Script HTML-to-PDF Converter
+  // Page break and display styles optimized for both Browser Print and Google Apps Script HTML-to-PDF Converter
   const basePageStyle = `display: block !important; clear: both !important; height: auto !important; min-height: 0 !important; overflow: visible !important; max-height: none !important;`;
-  
-  // First page: page-break-after only (no page-break-before)
-  const firstPageStyle = `page-break-after: always !important; break-after: page !important; ${basePageStyle}`;
-  
-  // Subsequent pages: both page-break-before and page-break-after
-  const subsequentPageStyle = `page-break-before: always !important; page-break-after: always !important; break-before: page !important; break-after: page !important; ${basePageStyle}`;
 
-  // Assign styles based on which pages are rendered
-  const sptStyle = firstPageStyle; // SPT is always the first page if showSPT is true
-  const sppdHal1Style = showSPT ? subsequentPageStyle : firstPageStyle; // SPPD Hal 1 is subsequent if SPT is shown, otherwise it's first
-  const sppdHal2Style = (showSPT || showSPPDHal1) ? subsequentPageStyle : firstPageStyle; // SPPD Hal 2 is subsequent if either is shown, otherwise first
+  const hasAfterSpt = showSPPDHal1 || showSPPDHal2;
+  const hasAfterSppd1 = showSPPDHal2;
+
+  const sptStyle = `${hasAfterSpt ? 'page-break-after: always !important; break-after: page !important; ' : ''}${basePageStyle}`;
+  const sppdHal1Style = `${showSPT ? 'page-break-before: always !important; break-before: page !important; ' : ''}${hasAfterSppd1 ? 'page-break-after: always !important; break-after: page !important; ' : ''}${basePageStyle}`;
+  const sppdHal2Style = `${(showSPT || showSPPDHal1) ? 'page-break-before: always !important; break-before: page !important; ' : ''}${basePageStyle}`;
 
   return `<!DOCTYPE html>
 <html lang="id">

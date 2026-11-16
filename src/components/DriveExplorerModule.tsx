@@ -151,7 +151,11 @@ export const DriveExplorerModule: React.FC<DriveExplorerModuleProps> = ({
       const files = await listGoogleDriveFiles(googleToken, folderId, search);
       setGDriveFiles(files);
     } catch (err: any) {
-      console.error('Error fetching Google Drive files:', err);
+      if (err?.message?.includes('AUTH_EXPIRED')) {
+        console.warn('Google Drive session expired while fetching files:', err.message);
+      } else {
+        console.error('Error fetching Google Drive files:', err);
+      }
       setGDriveError(err?.message || 'Gagal mengambil berkas dari Google Drive');
     } finally {
       setGDriveLoading(false);
@@ -251,7 +255,11 @@ export const DriveExplorerModule: React.FC<DriveExplorerModuleProps> = ({
       // Refresh current Google Drive directory listing
       await fetchGDriveFiles(currentGDriveFolderId, gDriveSearch);
     } catch (err: any) {
-      console.error('Central Sync failed:', err);
+      if (err?.message?.includes('AUTH_EXPIRED')) {
+        console.warn('Central Sync paused due to expired Google Drive token:', err.message);
+      } else {
+        console.error('Central Sync failed:', err);
+      }
       setCentralSyncError(err?.message || 'Gagal melaksanakan sinkronisasi pusat ke Google Drive');
     } finally {
       setIsCentralSyncRunning(false);

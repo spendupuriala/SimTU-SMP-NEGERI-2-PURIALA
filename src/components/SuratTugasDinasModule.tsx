@@ -209,6 +209,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
   // Print & Preview State
   const [selectedForPrint, setSelectedForPrint] = useState<SuratTugasDinas | null>(null);
   const [printMode, setPrintMode] = useState<SPTPrintMode>('spt_only');
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   // Google Drive Template State
   const [isDriveTemplateModalOpen, setIsDriveTemplateModalOpen] = useState(false);
@@ -851,43 +852,169 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
     }
   };
 
+  const handleDownloadPdf = async (tugas: SuratTugasDinas, mode: SPTPrintMode) => {
+    setIsGeneratingPdf(true);
+    try {
+      const htmlContent = generateSuratTugasFullHtml(tugas, identitasSekolah, mode);
+      const cleanNama = (tugas.personil?.[0]?.nama || 'Dinas')
+        .replace(/[^a-zA-Z0-9\s]/g, '')
+        .trim()
+        .replace(/\s+/g, '_');
+      const safeNo = (tugas.noSuratTugas || tugas.noSPPD || 'Surat_Tugas')
+        .replace(/[/\\?%*:|"<>]/g, '_')
+        .trim()
+        .replace(/\s+/g, '_');
+      const suffix = mode === 'spt_only' ? 'SPT' : mode === 'sppd_only' ? 'SPPD' : 'SPT_SPPD';
+      const fileName = `${suffix}_${safeNo}_${cleanNama}.pdf`;
+
+      const parser = new DOMParser();
+      const parsedDoc = parser.parseFromString(htmlContent, 'text/html');
+      const rawCss = Array.from(parsedDoc.querySelectorAll('style'))
+        .map((s) => s.textContent || '')
+        .join('\n');
+
+      const tempContainer = document.createElement('div');
+      tempContainer.style.position = 'fixed';
+      tempContainer.style.left = '-99999px';
+      tempContainer.style.top = '0';
+      tempContainer.style.width = '210mm';
+      tempContainer.style.background = '#ffffff';
+      tempContainer.innerHTML = `<style>${rawCss}\n.no-print{display:none!important;}\n.document-page{margin:0!important;box-shadow:none!important;}</style>${parsedDoc.body ? parsedDoc.body.innerHTML : htmlContent}`;
+      document.body.appendChild(tempContainer);
+
+      try {
+        const opt = {
+          margin: 0,
+          filename: fileName,
+          image: { type: 'jpeg' as const, quality: 0.98 },
+          html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+          jsPDF: { unit: 'mm', format: 'a4' as const, orientation: 'portrait' as const },
+        };
+        await html2pdf().set(opt).from(tempContainer).save();
+      } finally {
+        if (document.body.contains(tempContainer)) {
+          document.body.removeChild(tempContainer);
+        }
+      }
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
   const handlePrintDocument = (tugas: SuratTugasDinas, mode: SPTPrintMode) => {
     const html = generateSuratTugasFullHtml(tugas, identitasSekolah, mode);
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed';
-    iframe.style.right = '0';
-    iframe.style.bottom = '0';
-    iframe.style.width = '0';
-    iframe.style.height = '0';
-    iframe.style.border = '0';
-    document.body.appendChild(iframe);
 
-    const doc = iframe.contentWindow?.document || iframe.contentDocument;
-    if (doc) {
-      doc.open();
-      doc.write(html);
-      doc.close();
-      setTimeout(() => {
-        try {
-          iframe.contentWindow?.focus();
-          iframe.contentWindow?.print();
-        } catch (e) {
-          console.warn('Iframe print error:', e);
-          const w = window.open('', '_blank');
-          if (w) {
-            w.document.open();
-            w.document.write(html);
-            w.document.close();
-            w.print();
+    try {
+      const parser = new DOMParser();
+      const parsedDoc = parser.parseFromString(html, 'text/html');
+      const extractedCss = Array.from(parsedDoc.querySelectorAll('style'))
+        .map((s) => s.textContent || '')
+        .join('\n')
+        .replace(/\bbody\b/g, '#simtu-print-portal');
+      const bodyHtml = parsedDoc.body ? parsedDoc.body.innerHTML : html;
+
+      const oldPortal = document.getElementById('simtu-print-portal');
+      if (oldPortal) oldPortal.remove();
+      const oldStyle = document.getElementById('simtu-print-portal-style');
+      if (oldStyle) oldStyle.remove();
+
+      const styleEl = document.createElement('style');
+      styleEl.id = 'simtu-print-portal-style';
+      styleEl.textContent = `
+        @media screen {
+          #simtu-print-portal {
+            display: none !important;
           }
-        } finally {
-          setTimeout(() => {
-            if (document.body.contains(iframe)) {
-              document.body.removeChild(iframe);
-            }
-          }, 1500);
         }
-      }, 400);
+        ${extractedCss}
+        @media print {
+          @page {
+            size: A4 portrait !important;
+            margin: 20mm 20mm 20mm 25mm !important;
+          }
+          html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #ffffff !important;
+            color: #000000 !important;
+            height: auto !important;
+            overflow: visible !important;
+          }
+          #root {
+            display: none !important;
+          }
+          #simtu-print-portal {
+            display: block !important;
+            position: static !important;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #ffffff !important;
+            color: #000000 !important;
+            overflow: visible !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          #simtu-print-portal .no-print {
+            display: none !important;
+          }
+        }
+      `;
+
+      const portalEl = document.createElement('div');
+      portalEl.id = 'simtu-print-portal';
+      portalEl.innerHTML = bodyHtml;
+
+      document.head.appendChild(styleEl);
+      document.body.appendChild(portalEl);
+
+      let printEventFired = false;
+      let cleanedUp = false;
+      const onBeforePrint = () => {
+        printEventFired = true;
+      };
+      const cleanup = () => {
+        if (cleanedUp) return;
+        cleanedUp = true;
+        window.removeEventListener('beforeprint', onBeforePrint);
+        window.removeEventListener('afterprint', cleanup);
+        const p = document.getElementById('simtu-print-portal');
+        if (p) p.remove();
+        const s = document.getElementById('simtu-print-portal-style');
+        if (s) s.remove();
+      };
+
+      window.addEventListener('beforeprint', onBeforePrint);
+      window.addEventListener('afterprint', cleanup);
+
+      const startTime = Date.now();
+      window.focus();
+      window.print();
+      const elapsed = Date.now() - startTime;
+
+      if (!printEventFired && elapsed < 100) {
+        setTimeout(() => {
+          if (!printEventFired) {
+            cleanup();
+            setSyncFeedback({
+              message: 'Dialog cetak browser diblokir oleh sandbox preview — dokumen PDF otomatis diunduh agar siap dicetak.',
+              type: 'info',
+            });
+            handleDownloadPdf(tugas, mode).catch((pdfErr) => {
+              console.warn('PDF fallback error:', pdfErr);
+            });
+          } else {
+            setTimeout(cleanup, 60000);
+          }
+        }, 600);
+      } else {
+        setTimeout(cleanup, 60000);
+      }
+    } catch (e: any) {
+      console.warn('Print portal error, downloading PDF fallback:', e);
+      handleDownloadPdf(tugas, mode).catch((pdfErr) => {
+        console.warn('PDF fallback error:', pdfErr);
+      });
     }
   };
 
@@ -1198,12 +1325,13 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                       <div className="flex items-center justify-center gap-1.5">
                         {/* Cetak / Preview SPT Format Drive */}
                         <button
+                          type="button"
                           onClick={() => {
                             setSelectedForPrint(item);
                             setPrintMode('spt_only');
                             setSaveSuccessMsg(null);
                           }}
-                          className="bg-sky-600 hover:bg-sky-700 text-white px-2.5 py-1.5 rounded-md font-bold text-[11px] flex items-center gap-1 shadow-sm transition"
+                          className="bg-sky-600 hover:bg-sky-700 text-white px-2.5 py-1.5 rounded-md font-bold text-[11px] flex items-center gap-1 shadow-sm transition cursor-pointer"
                           title="Pratinjau & Cetak SPT Format Google Drive"
                         >
                           <Printer className="w-3.5 h-3.5" />
@@ -1212,12 +1340,13 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
 
                         {/* SPPD Mode */}
                         <button
+                          type="button"
                           onClick={() => {
                             setSelectedForPrint(item);
                             setPrintMode('sppd_only');
                             setSaveSuccessMsg(null);
                           }}
-                          className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2 py-1.5 rounded-md font-semibold text-[11px] flex items-center gap-1 transition"
+                          className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2 py-1.5 rounded-md font-semibold text-[11px] flex items-center gap-1 transition cursor-pointer"
                           title="Cetak SPPD Resmi"
                         >
                           <FileText className="w-3.5 h-3.5" />
@@ -1625,8 +1754,9 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
 
                 {/* Print Button */}
                 <button
+                  type="button"
                   onClick={() => handlePrintDocument(selectedForPrint, printMode)}
-                  className="bg-sky-600 hover:bg-sky-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition"
+                  className="bg-sky-600 hover:bg-sky-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition cursor-pointer"
                 >
                   <Printer className="w-3.5 h-3.5" />
                   <span>
@@ -1638,10 +1768,27 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                   </span>
                 </button>
 
+                {/* Download PDF */}
+                <button
+                  type="button"
+                  onClick={() => handleDownloadPdf(selectedForPrint, printMode)}
+                  disabled={isGeneratingPdf}
+                  className="bg-rose-50 hover:bg-rose-100 disabled:opacity-50 text-rose-700 border border-rose-200 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                  title="Unduh Dokumen Siap Cetak Format PDF"
+                >
+                  {isGeneratingPdf ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5" />
+                  )}
+                  <span>{isGeneratingPdf ? 'Membuat PDF...' : 'PDF'}</span>
+                </button>
+
                 {/* Download Word (.doc) */}
                 <button
+                  type="button"
                   onClick={() => downloadSuratTugasDocFile(selectedForPrint, identitasSekolah, printMode)}
-                  className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition"
+                  className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
                   title="Unduh Format Microsoft Word (.doc)"
                 >
                   <Download className="w-3.5 h-3.5" />
@@ -1650,8 +1797,9 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
 
                 {/* Download HTML */}
                 <button
+                  type="button"
                   onClick={() => downloadSuratTugasHtmlFile(selectedForPrint, identitasSekolah, printMode)}
-                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition"
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
                   title="Unduh Berkas HTML Standar"
                 >
                   <FileCode className="w-3.5 h-3.5" />
@@ -1765,7 +1913,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                     <span className="font-bold">Kepada</span>
                     <span>:</span>
                     <div>
-                      {selectedForPrint.personil.length > 1 ? (
+                      {((selectedForPrint.personil || []).length > 1) ? (
                         <table className="w-full border-collapse border border-slate-700 text-xs my-1">
                           <thead>
                             <tr className="bg-slate-100">
@@ -1776,7 +1924,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                             </tr>
                           </thead>
                           <tbody>
-                            {selectedForPrint.personil.map((p, idx) => (
+                            {(selectedForPrint.personil || []).map((p, idx) => (
                               <tr key={idx}>
                                 <td className="border border-slate-700 p-1 text-center font-bold">{idx + 1}.</td>
                                 <td className="border border-slate-700 p-1">
@@ -1794,22 +1942,22 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                           <div className="grid grid-cols-[110px_10px_1fr]">
                             <span>1. Nama Lengkap</span>
                             <span>:</span>
-                            <span className="font-bold">{selectedForPrint.personil[0]?.nama || '-'}</span>
+                            <span className="font-bold">{selectedForPrint.personil?.[0]?.nama || '-'}</span>
                           </div>
                           <div className="grid grid-cols-[110px_10px_1fr]">
                             <span>2. NIP</span>
                             <span>:</span>
-                            <span className="font-mono">{selectedForPrint.personil[0]?.nip || '-'}</span>
+                            <span className="font-mono">{selectedForPrint.personil?.[0]?.nip || '-'}</span>
                           </div>
                           <div className="grid grid-cols-[110px_10px_1fr]">
                             <span>3. Pangkat / Gol.</span>
                             <span>:</span>
-                            <span>{selectedForPrint.personil[0]?.pangkatGol || '-'}</span>
+                            <span>{selectedForPrint.personil?.[0]?.pangkatGol || '-'}</span>
                           </div>
                           <div className="grid grid-cols-[110px_10px_1fr]">
                             <span>4. Jabatan</span>
                             <span>:</span>
-                            <span>{selectedForPrint.personil[0]?.jabatan || 'Kepala Sekolah'}</span>
+                            <span>{selectedForPrint.personil?.[0]?.jabatan || 'Kepala Sekolah'}</span>
                           </div>
                           <div className="grid grid-cols-[110px_10px_1fr]">
                             <span>5. Unit Kerja</span>
@@ -1940,7 +2088,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                         <td className="border border-slate-700 p-1.5 text-center font-bold">2.</td>
                         <td className="border border-slate-700 p-1.5">Nama Pegawai yang Diperintahkan</td>
                         <td className="border border-slate-700 p-1.5 font-bold">
-                          {selectedForPrint.personil[0]?.nama || '-'}
+                          {selectedForPrint.personil?.[0]?.nama || '-'}
                         </td>
                       </tr>
                       <tr>
@@ -1949,8 +2097,8 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                           a. Pangkat dan Golongan<br />b. Jabatan / Instansi<br />c. Tingkat Biaya Perjalanan Dinas
                         </td>
                         <td className="border border-slate-700 p-1.5">
-                          a. {selectedForPrint.personil[0]?.pangkatGol || '-'}<br />
-                          b. {selectedForPrint.personil[0]?.jabatan || 'Guru'} / SMP Negeri 2 Puriala<br />
+                          a. {selectedForPrint.personil?.[0]?.pangkatGol || '-'}<br />
+                          b. {selectedForPrint.personil?.[0]?.jabatan || 'Guru'} / SMP Negeri 2 Puriala<br />
                           c. Tingkat C (Standar Perjalanan Dinas Daerah)
                         </td>
                       </tr>
@@ -1978,7 +2126,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                           a. Lamanya Perjalanan Dinas<br />b. Tanggal Berangkat<br />c. Tanggal Harus Kembali
                         </td>
                         <td className="border border-slate-700 p-1.5">
-                          a. {selectedForPrint.lamaHari} ({terbilangHari(selectedForPrint.lamaHari)}) Hari<br />
+                          a. {selectedForPrint.lamaHari} ({terbilangHari(Number(selectedForPrint.lamaHari) || 1)}) Hari<br />
                           b. {formatTanggalIndonesia(selectedForPrint.tanggalBerangkat)}<br />
                           c. {formatTanggalIndonesia(selectedForPrint.tanggalKembali)}
                         </td>
@@ -1987,9 +2135,9 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                         <td className="border border-slate-700 p-1.5 text-center font-bold">8.</td>
                         <td className="border border-slate-700 p-1.5">Pengikut / Personil Pendamping</td>
                         <td className="border border-slate-700 p-1.5">
-                          {selectedForPrint.personil.length > 1 ? (
+                          {(selectedForPrint.personil || []).length > 1 ? (
                             <ol className="list-decimal pl-4">
-                              {selectedForPrint.personil.slice(1).map((p, idx) => (
+                              {(selectedForPrint.personil || []).slice(1).map((p, idx) => (
                                 <li key={idx}><strong>{p.nama}</strong> ({p.jabatan || 'Guru'}) - NIP: {p.nip || '-'}</li>
                               ))}
                             </ol>

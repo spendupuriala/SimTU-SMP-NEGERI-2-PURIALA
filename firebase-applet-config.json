@@ -3,6 +3,7 @@
   "appId": "1:713145284385:web:55da3d62f42224d2897060",
   "apiKey": "AIzaSyAZ2Tg4Wu08XGPBA7v8Y2NhGTRDRv-vyyo",
   "authDomain": "gen-lang-client-0891194319.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-simtu-1fe08e7d-5b6b-49d8-a5a3-17ecc62021d9",
   "storageBucket": "gen-lang-client-0891194319.firebasestorage.app",
   "messagingSenderId": "713145284385",
   "measurementId": "",

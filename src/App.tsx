@@ -150,6 +150,20 @@ export default function App() {
 
   // Initialize Firebase Auth listener (Auto-connects to Drive on mount if session exists)
   useEffect(() => {
+    const handleAuthExpired = () => {
+      setGoogleToken(null);
+      setDriveQuota(null);
+      setAutoSyncStatus('idle');
+      setIsDriveDataLoaded(false);
+      showToast(
+        'Sesi Google Drive telah berakhir. Silakan klik "Hubungkan Google" untuk menyambung kembali.',
+        'info',
+        5000
+      );
+    };
+
+    window.addEventListener('simtu-auth-expired', handleAuthExpired);
+
     const unsubscribe = initAuth(
       (user, token) => {
         setGoogleUser(user);
@@ -171,6 +185,7 @@ export default function App() {
       }
     );
     return () => {
+      window.removeEventListener('simtu-auth-expired', handleAuthExpired);
       if (typeof unsubscribe === 'function') unsubscribe();
     };
   }, [refreshQuota]);
@@ -403,7 +418,7 @@ export default function App() {
         // User voluntarily closed popup, ignore
         return;
       }
-      console.error('Login error:', error);
+      console.warn('Login warning:', error);
       showToast(`Gagal menghubungkan Google Drive: ${error?.message || 'Login gagal'}`, 'error');
     } finally {
       setIsGoogleLoading(false);
