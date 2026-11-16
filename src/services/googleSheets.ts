@@ -819,7 +819,7 @@ export const writeTemplatePreservingDataToSheet = async (
   if (!existingRows || existingRows.length === 0) {
     const rows = [defaultHeaders, ...dataList.map((item, idx) => mapRecordToHeaders(item, idx, defaultHeaders))];
     const writeRange = encodeURIComponent(`${sheetName}!A1`);
-    await fetch(`${SHEETS_API_URL}/${spreadsheetId}/values/${writeRange}?valueInputOption=USER_ENTERED`, {
+    const res = await fetch(`${SHEETS_API_URL}/${spreadsheetId}/values/${writeRange}?valueInputOption=USER_ENTERED`, {
       method: 'PUT',
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -831,6 +831,10 @@ export const writeTemplatePreservingDataToSheet = async (
         values: rows,
       }),
     });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `Gagal menulis data awal ke spreadsheet "${sheetName}"`);
+    }
     return;
   }
 
@@ -2237,7 +2241,11 @@ export const writeGuruPTKToSheet = async (
       const findIndex = (kws: string[]) =>
         headers.findIndex((h) => kws.some((kw) => h.toLowerCase().includes(kw)));
 
-      const cNo = findIndex(['no', 'no.', 'nomor urut']);
+      const cNoExact = headers.findIndex((h) => {
+        const hl = h.toLowerCase().trim();
+        return hl === 'no' || hl === 'no.' || hl === 'nomor urut' || hl === 'no urut';
+      });
+      const cNo = cNoExact >= 0 ? cNoExact : findIndex(['nomor urut', 'no.']);
       const cNama = findIndex(['nama lengkap', 'nama guru', 'nama ptk', 'nama pegawai', 'nama']);
       const cNip = findIndex(['nip', 'n.i.p', 'nip/karpeg']);
       const cNuptk = findIndex(['nuptk', 'n.u.p.t.k']);
@@ -2754,16 +2762,22 @@ export const recordSKPanitiaASTSToAgendaSuratKeluar = async (
 
 /**
  * Finds or Creates the Google Drive folder "04_KEPEGAWAIAN_PTK" inside "TATA USAHA"
- * and finds or creates the spreadsheet "DATA_GURU_PTK".
+ * and finds or creates the spreadsheet "Data Guru & PTK".
  */
 export const findOrCreateGuruPTKAgendaSheet = async (
   accessToken: string,
   initialGuruList: GuruPTK[] = []
-): Promise<{ spreadsheetId: string; webViewLink: string; folderId: string }> => {
+): Promise<{
+  spreadsheetId: string;
+  webViewLink: string;
+  folderId: string;
+  fileName: string;
+  sheetName: string;
+}> => {
   // 1. Find or create folder 'TATA USAHA'
   const tataUsahaQuery = "(name = 'TATA USAHA' or name = 'Tata Usaha') and mimeType = 'application/vnd.google-apps.folder' and trashed = false";
   let tataUsahaId = '';
-  
+
   const tuRes = await fetch(`${DRIVE_API_URL}/files?${new URLSearchParams({ q: tataUsahaQuery, fields: 'files(id)' }).toString()}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -2773,7 +2787,7 @@ export const findOrCreateGuruPTKAgendaSheet = async (
       tataUsahaId = tuData.files[0].id;
     }
   }
-  
+
   if (!tataUsahaId) {
     const createTU = await fetch(`${DRIVE_API_URL}/files`, {
       method: 'POST',
@@ -2791,15 +2805,15 @@ export const findOrCreateGuruPTKAgendaSheet = async (
       tataUsahaId = tuData.id;
     }
   }
-  
+
   if (!tataUsahaId) {
     throw new Error('Gagal menemukan atau membuat folder TATA USAHA di Google Drive.');
   }
 
   // 2. Find or create subfolder '04_KEPEGAWAIAN_PTK' inside TATA USAHA
-  const ptkFolderQuery = `name = '04_KEPEGAWAIAN_PTK' and '${tataUsahaId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  const ptkFolderQuery = `(name = '04_KEPEGAWAIAN_PTK' or name = 'KEPEGAWAIAN_PTK' or name = '04_KEPEGAWAIAN' or name = 'KEPEGAWAIAN' or name = 'GURU_DAN_PTK') and '${tataUsahaId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
   let ptkFolderId = '';
-  
+
   const ptkFolderRes = await fetch(`${DRIVE_API_URL}/files?${new URLSearchParams({ q: ptkFolderQuery, fields: 'files(id)' }).toString()}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -2809,7 +2823,7 @@ export const findOrCreateGuruPTKAgendaSheet = async (
       ptkFolderId = ptkFolderData.files[0].id;
     }
   }
-  
+
   if (!ptkFolderId) {
     const createPTKFolder = await fetch(`${DRIVE_API_URL}/files`, {
       method: 'POST',
@@ -2828,28 +2842,53 @@ export const findOrCreateGuruPTKAgendaSheet = async (
       ptkFolderId = ptkFolderData.id;
     }
   }
-  
+
   if (!ptkFolderId) {
     throw new Error('Gagal menemukan atau membuat subfolder TATA USAHA/04_KEPEGAWAIAN_PTK di Google Drive.');
   }
 
-  // 3. Find if spreadsheet "DATA_GURU_PTK" exists in '04_KEPEGAWAIAN_PTK'
-  const sheetQuery = `mimeType = 'application/vnd.google-apps.spreadsheet' and name = 'DATA_GURU_PTK' and '${ptkFolderId}' in parents and trashed = false`;
+  // 3. Find if spreadsheet "Data Guru & PTK" (or legacy "DATA_GURU_PTK") exists
+  const nameFilter = "(name = 'Data Guru & PTK' or name = 'DATA GURU & PTK' or name = 'DATA_GURU_PTK')";
+  const searchQueries = [
+    `mimeType = 'application/vnd.google-apps.spreadsheet' and ${nameFilter} and '${ptkFolderId}' in parents and trashed = false`,
+    `mimeType = 'application/vnd.google-apps.spreadsheet' and ${nameFilter} and '${tataUsahaId}' in parents and trashed = false`,
+    `mimeType = 'application/vnd.google-apps.spreadsheet' and (name = 'Data Guru & PTK' or name = 'DATA GURU & PTK') and trashed = false`,
+  ];
+
   let spreadsheetId = '';
   let webViewLink = '';
+  let fileName = 'Data Guru & PTK';
 
-  const sheetRes = await fetch(`${DRIVE_API_URL}/files?${new URLSearchParams({ q: sheetQuery, fields: 'files(id, webViewLink)' }).toString()}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (sheetRes.ok) {
-    const sheetData = await sheetRes.json();
-    if (sheetData.files && sheetData.files.length > 0) {
-      spreadsheetId = sheetData.files[0].id;
-      webViewLink = sheetData.files[0].webViewLink;
+  for (const q of searchQueries) {
+    const sheetRes = await fetch(
+      `${DRIVE_API_URL}/files?${new URLSearchParams({
+        q,
+        fields: 'files(id, name, webViewLink, modifiedTime)',
+        orderBy: 'modifiedTime desc',
+        pageSize: '20',
+      }).toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (sheetRes.ok) {
+      const sheetData = await sheetRes.json();
+      const files: any[] = sheetData.files || [];
+      if (files.length > 0) {
+        files.sort((a, b) => {
+          const score = (n: string) =>
+            n === 'Data Guru & PTK' ? 3 : n.toLowerCase() === 'data guru & ptk' ? 2 : 1;
+          const diff = score(b.name || '') - score(a.name || '');
+          if (diff !== 0) return diff;
+          return new Date(b.modifiedTime || 0).getTime() - new Date(a.modifiedTime || 0).getTime();
+        });
+        spreadsheetId = files[0].id;
+        webViewLink = files[0].webViewLink || `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+        fileName = files[0].name || 'Data Guru & PTK';
+        break;
+      }
     }
   }
 
-  // 4. If not exists, create new Spreadsheet
+  // 4. If not exists, create new Spreadsheet named "Data Guru & PTK"
   if (!spreadsheetId) {
     const createSheet = await fetch(SHEETS_API_URL, {
       method: 'POST',
@@ -2859,7 +2898,7 @@ export const findOrCreateGuruPTKAgendaSheet = async (
       },
       body: JSON.stringify({
         properties: {
-          title: 'DATA_GURU_PTK',
+          title: 'Data Guru & PTK',
         },
         sheets: [
           {
@@ -2877,7 +2916,8 @@ export const findOrCreateGuruPTKAgendaSheet = async (
     if (createSheet.ok) {
       const createdData = await createSheet.json();
       spreadsheetId = createdData.spreadsheetId;
-      webViewLink = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+      webViewLink = createdData.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+      fileName = 'Data Guru & PTK';
 
       // Move spreadsheet to folder '04_KEPEGAWAIAN_PTK'
       await fetch(`${DRIVE_API_URL}/files/${spreadsheetId}?addParents=${ptkFolderId}&fields=id,parents`, {
@@ -2895,11 +2935,30 @@ export const findOrCreateGuruPTKAgendaSheet = async (
       }
     } else {
       const errDetail = await createSheet.json().catch(() => ({}));
-      throw new Error(errDetail?.error?.message || 'Gagal membuat file spreadsheet DATA_GURU_PTK');
+      throw new Error(errDetail?.error?.message || 'Gagal membuat file spreadsheet Data Guru & PTK');
     }
   }
 
-  return { spreadsheetId, webViewLink, folderId: ptkFolderId };
+  // 5. Resolve target sheet tab dynamically to preserve existing templates
+  let sheetName = 'DATA PTK';
+  try {
+    const meta = await getSpreadsheetMetadata(accessToken, spreadsheetId);
+    const preferredTabs = ['DATA PTK', 'Data Guru & PTK', 'DATA GURU & PTK', 'DATA GURU', 'GURU & PTK', 'PTK', 'GURU'];
+    const matchedTab =
+      meta.sheetNames.find((s) => preferredTabs.some((p) => s.toLowerCase().trim() === p.toLowerCase())) ||
+      meta.sheetNames.find((s) => {
+        const sl = s.toLowerCase();
+        return sl.includes('ptk') || sl.includes('guru') || sl.includes('pegawai');
+      }) ||
+      meta.sheetNames[0];
+    if (matchedTab) {
+      sheetName = matchedTab;
+    }
+  } catch {
+    sheetName = 'DATA PTK';
+  }
+
+  return { spreadsheetId, webViewLink, folderId: ptkFolderId, fileName, sheetName };
 };
 
 /**

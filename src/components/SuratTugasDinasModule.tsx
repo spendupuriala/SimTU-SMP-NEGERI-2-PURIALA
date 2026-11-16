@@ -66,61 +66,80 @@ import {
   loadBukuAgendaSuratKeluarFromDrive,
 } from '../services/googleDrive';
 
+const normalizeDriveDocNameKey = (fileName: string): string =>
+  fileName
+    .trim()
+    .toLowerCase()
+    .replace(/\s*\(\d+\)(?=\.[^.]+$|$)/, '')
+    .replace(/\s+/g, ' ');
+
 const parseSuratTugasFileName = (fileName: string, createdTime?: string) => {
-  const nameWithoutExt = fileName.replace(/\.[^/.]+$/, "");
-  
-  let noSuratTugas = '';
+  // Strip copy suffix like " (1)" before removing extension
+  const cleanFileName = fileName.replace(/\s*\(\d+\)(?=\.[^.]+$|$)/, '').trim();
+  const nameWithoutExt = cleanFileName.replace(/\.[^/.]+$/, '');
+  const isSPPD = /\bSPPD\b|PERJALANAN[_\s-]*DINAS/i.test(nameWithoutExt);
+
+  let extractedNo = '';
   let personilName = '';
 
-  // Clean prefix SPT_ or SPPD_ or Surat_Tugas_
-  let cleanName = nameWithoutExt;
-  if (cleanName.toUpperCase().startsWith('SPT_')) {
-    cleanName = cleanName.substring(4);
-  } else if (cleanName.toUpperCase().startsWith('SPPD_')) {
-    cleanName = cleanName.substring(5);
-  } else if (cleanName.toUpperCase().startsWith('SURAT_TUGAS_')) {
-    cleanName = cleanName.substring(12);
-  } else if (cleanName.toUpperCase().startsWith('SURAT_TUGAS')) {
-    cleanName = cleanName.substring(11);
+  // Clean prefix SPT_, SPPD_, SURAT_TUGAS_, SURAT_PERINTAH_TUGAS_, SURAT_PERJALANAN_DINAS_
+  let cleanName = nameWithoutExt
+    .replace(/^(SURAT[_\s-]+PERINTAH[_\s-]+TUGAS|SURAT[_\s-]+PERJALANAN[_\s-]+DINAS|SURAT[_\s-]+TUGAS|SPPD|SPT)[_\s-]*/i, '')
+    .trim();
+
+  if (!cleanName) {
+    cleanName = nameWithoutExt;
   }
 
-  // Look for a nomor surat pattern in the file name segments
-  const segments = cleanName.split('_');
-  
-  // Try to detect SMPN, SMP, or Puriala segment
-  const schoolIndex = segments.findIndex(s => {
-    const sl = s.toLowerCase();
-    return sl.includes('smp') || sl.includes('puriala') || sl.includes('spt') || sl.includes('sppd');
-  });
+  // Split by underscore or whitespace, keeping hyphens inside codes like "SMP-02"
+  const segments = cleanName.split(/[_\s]+/).filter(Boolean);
 
-  if (schoolIndex !== -1) {
-    let endIdx = schoolIndex + 1;
-    if (endIdx < segments.length && /^\d{4}$/.test(segments[endIdx])) {
-      endIdx++;
-    }
-    noSuratTugas = segments.slice(0, endIdx).join('/');
-    personilName = segments.slice(endIdx).join(' ');
-  } else if (segments.length >= 3) {
-    noSuratTugas = segments.slice(0, 2).join('/');
-    personilName = segments.slice(2).join(' ');
+  // Best heuristic: find 4-digit year segment (e.g., 2025, 2026) which ends standard nomor surat
+  const yearIndex = segments.findIndex((s) => /^20\d{2}$/.test(s));
+
+  if (yearIndex >= 1) {
+    extractedNo = segments.slice(0, yearIndex + 1).join('/');
+    personilName = segments.slice(yearIndex + 1).join(' ');
   } else {
-    personilName = cleanName;
+    // Fallback: detect SMPN, SMP, Puriala, SPT, or SPPD segment
+    const schoolIndex = segments.findIndex((s) => {
+      const sl = s.toLowerCase();
+      return sl.includes('smp') || sl.includes('puriala') || sl === 'spt' || sl === 'sppd';
+    });
+
+    if (schoolIndex !== -1) {
+      let endIdx = schoolIndex + 1;
+      if (endIdx < segments.length && /^\d{4}$/.test(segments[endIdx])) {
+        endIdx++;
+      }
+      extractedNo = segments.slice(0, endIdx).join('/');
+      personilName = segments.slice(endIdx).join(' ');
+    } else if (segments.length >= 3) {
+      extractedNo = segments.slice(0, 2).join('/');
+      personilName = segments.slice(2).join(' ');
+    } else {
+      personilName = cleanName;
+    }
   }
 
   personilName = personilName.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
-  const capitalizeWords = (str: string) => {
-    return str.replace(/\b\w/g, c => c.toUpperCase());
-  };
+  const capitalizeWords = (str: string) => str.replace(/\b\w/g, (c) => c.toUpperCase());
   personilName = capitalizeWords(personilName || 'Nama Pegawai');
 
-  if (!noSuratTugas) {
+  if (!extractedNo) {
     const year = createdTime ? new Date(createdTime).getFullYear() : new Date().getFullYear();
-    noSuratTugas = `090/052/SMPN.2/${year}`;
+    const kodePrefix = isSPPD ? '094' : '090';
+    extractedNo = `${kodePrefix}/001/SMPN.2/${year}`;
   }
 
-  noSuratTugas = noSuratTugas.replace(/_/g, '/').replace(/-/g, '/').replace(/\s+/g, '');
+  extractedNo = extractedNo.replace(/_/g, '/').replace(/\s+/g, '');
 
-  return { noSuratTugas, personilName };
+  return {
+    noSuratTugas: isSPPD ? '' : extractedNo,
+    noSPPD: isSPPD ? extractedNo : '',
+    personilName,
+    isSPPD,
+  };
 };
 
 interface SuratTugasDinasModuleProps {
@@ -215,28 +234,72 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
     try {
       // Step 1: Scan all physical files in TATA USAHA/07_ARSIP_DOKUMEN_SURAT
       const files = await fetchArsipDokumenFiles(googleToken);
-      const documentFiles = files.filter(
-        (f) =>
-          !f.isFolder &&
-          f.name !== 'REKAP_SURAT_TUGAS_DINAS.json' &&
-          f.name !== 'REKAP_PEMBUAT_SURAT.json' &&
-          (f.name.toLowerCase().endsWith('.pdf') ||
-            f.name.toLowerCase().endsWith('.docx') ||
-            f.name.toLowerCase().endsWith('.doc')) &&
-          (f.name.toUpperCase().startsWith('SPT_') ||
-            f.name.toUpperCase().startsWith('SPPD_') ||
-            f.name.toUpperCase().includes('SPT_') ||
-            f.name.toUpperCase().includes('SPPD_') ||
-            f.name.toUpperCase().includes('SURAT_TUGAS'))
-      );
+      const rawDocumentFiles = files.filter((f) => {
+        if (f.isFolder) return false;
+        const lowerName = f.name.toLowerCase();
+        if (lowerName.endsWith('.json')) return false;
 
-      // Step 2: Load the rekap JSON file
+        const isDoc =
+          lowerName.endsWith('.pdf') ||
+          lowerName.endsWith('.docx') ||
+          lowerName.endsWith('.doc') ||
+          lowerName.endsWith('.html') ||
+          lowerName.endsWith('.htm') ||
+          f.mimeType === 'application/vnd.google-apps.document';
+        if (!isDoc) return false;
+
+        const normalizedUpper = f.name.toUpperCase().replace(/[\s\-]+/g, '_');
+        return (
+          normalizedUpper.startsWith('SPT_') ||
+          normalizedUpper.startsWith('SPPD_') ||
+          normalizedUpper.includes('SPT_') ||
+          normalizedUpper.includes('SPPD_') ||
+          normalizedUpper.includes('SURAT_TUGAS') ||
+          normalizedUpper.includes('SURAT_PERINTAH_TUGAS') ||
+          normalizedUpper.includes('SURAT_PERJALANAN_DINAS') ||
+          /^09[04][_\-\s]/.test(f.name.toUpperCase())
+        );
+      });
+
+      // Sort strictly newest-first by modifiedTime / createdTime
+      rawDocumentFiles.sort((a, b) => {
+        const timeA = new Date(a.modifiedTime || a.createdTime || 0).getTime();
+        const timeB = new Date(b.modifiedTime || b.createdTime || 0).getTime();
+        return timeB - timeA;
+      });
+
+      // Deduplicate by document name: if duplicate names exist, ALWAYS take the newest one
+      const newestFileByName = new Map<string, GoogleDriveFile>();
+      for (const file of rawDocumentFiles) {
+        const docKey = normalizeDriveDocNameKey(file.name);
+        if (!newestFileByName.has(docKey)) {
+          newestFileByName.set(docKey, file);
+        }
+      }
+      const documentFiles = Array.from(newestFileByName.values());
+      const duplicatesSkipped = rawDocumentFiles.length - documentFiles.length;
+
+      // Step 2: Load the rekap JSON file and safely merge with current local tugasList
       const rekapData = await loadSuratTugasDataFromDrive(googleToken);
-      
-      // Use rekapData as base list. If empty, fall back to current tugasList
       let baseList: SuratTugasDinas[] = [];
       if (rekapData && Array.isArray(rekapData)) {
         baseList = [...rekapData];
+        const rekapIds = new Set(rekapData.map((r: SuratTugasDinas) => r.id));
+        const rekapNoSet = new Set(
+          rekapData
+            .flatMap((r: SuratTugasDinas) => [r.noSuratTugas, r.noSPPD])
+            .filter(Boolean)
+            .map((n: string) => n.trim().toLowerCase())
+        );
+        for (const localItem of tugasList) {
+          const sptLow = (localItem.noSuratTugas || '').trim().toLowerCase();
+          const sppdLow = (localItem.noSPPD || '').trim().toLowerCase();
+          const hasNoMatch =
+            (sptLow && rekapNoSet.has(sptLow)) || (sppdLow && rekapNoSet.has(sppdLow));
+          if (!rekapIds.has(localItem.id) && !hasNoMatch) {
+            baseList.push(localItem);
+          }
+        }
       } else {
         baseList = [...tugasList];
       }
@@ -244,17 +307,21 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
       // Track matched file IDs
       const matchedFileIds = new Set<string>();
 
-      // Step 3: Match existing rekap entries with physical files
+      // Step 3: Match existing entries with the newest deduplicated physical files
       const updatedList: SuratTugasDinas[] = baseList.map((tugas): SuratTugasDinas => {
         const safeNo = (tugas.noSuratTugas || '').replace(/[/\\?%*:|"<>]/g, '_');
+        const safeSppd = (tugas.noSPPD || '').replace(/[/\\?%*:|"<>]/g, '_');
+        const cleanPersonil = (tugas.personil[0]?.nama || '').replace(/[^a-zA-Z0-9]/g, '_');
 
-        // Match by exact file ID, or by constructed name, or if name contains safeNo
-        const matchedFile = documentFiles.find(
-          (f) =>
-            f.id === tugas.driveFileId ||
-            f.name.toLowerCase() === `SPT_${safeNo}_${(tugas.personil[0]?.nama || '').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`.toLowerCase() ||
-            (safeNo && f.name.includes(safeNo))
-        );
+        // Prefer matching by name / nomor first so newer uploaded copy replaces stale driveFileId
+        const matchedFile =
+          documentFiles.find(
+            (f) =>
+              (safeNo && f.name.toLowerCase() === `SPT_${safeNo}_${cleanPersonil}.pdf`.toLowerCase()) ||
+              (safeSppd && f.name.toLowerCase() === `SPPD_${safeSppd}_${cleanPersonil}.pdf`.toLowerCase()) ||
+              (safeNo && f.name.includes(safeNo)) ||
+              (safeSppd && f.name.includes(safeSppd))
+          ) || documentFiles.find((f) => f.id === tugas.driveFileId);
 
         if (matchedFile) {
           matchedFileIds.add(matchedFile.id);
@@ -273,45 +340,53 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
         }
       });
 
-      // Step 4: For any document file NOT matched, create a new record automatically (Langkah C)
+      // Step 4: For any document file NOT matched, create a new record automatically
       let newCount = 0;
       for (const file of documentFiles) {
         if (matchedFileIds.has(file.id)) continue;
 
-        // Extract metadata from file name using robust parser
-        const parsed = parseSuratTugasFileName(file.name, file.createdTime);
-        const parsedNoSurat = parsed.noSuratTugas;
-        const parsedNamaPersonil = parsed.personilName;
+        const fileTimestamp = file.modifiedTime || file.createdTime;
+        const parsed = parseSuratTugasFileName(file.name, fileTimestamp);
+        const fileDate = fileTimestamp
+          ? fileTimestamp.split('T')[0]
+          : new Date().toISOString().split('T')[0];
 
-        // Check if we already have this nomor surat in updatedList to prevent duplication
         const exists = updatedList.some(
           (item) =>
-            (item.noSuratTugas && item.noSuratTugas.toLowerCase() === parsedNoSurat.toLowerCase()) ||
-            item.driveFileId === file.id
+            item.driveFileId === file.id ||
+            (parsed.noSuratTugas &&
+              item.noSuratTugas &&
+              item.noSuratTugas.trim().toLowerCase() === parsed.noSuratTugas.trim().toLowerCase()) ||
+            (parsed.noSPPD &&
+              item.noSPPD &&
+              item.noSPPD.trim().toLowerCase() === parsed.noSPPD.trim().toLowerCase())
         );
 
         if (!exists) {
+          const docLabel = parsed.noSuratTugas || parsed.noSPPD;
           const newTugas: SuratTugasDinas = {
             id: `DRIVE-${file.id}`,
-            noSuratTugas: parsedNoSurat,
-            noSPPD: '',
-            kodeKlasifikasi: '090',
+            noSuratTugas: parsed.noSuratTugas,
+            noSPPD: parsed.noSPPD,
+            kodeKlasifikasi: parsed.isSPPD ? '094' : '090',
             dasarPenugasan: 'Sistem Deteksi Otomatis Berkas Google Drive',
-            personil: [{
-              nama: parsedNamaPersonil,
-              nip: '-',
-              pangkatGol: '-',
-              jabatan: 'Guru/Staf'
-            }],
-            maksudTugas: `Perjalanan Dinas Terkait: ${parsedNoSurat}`,
+            personil: [
+              {
+                nama: parsed.personilName,
+                nip: '-',
+                pangkatGol: '-',
+                jabatan: 'Guru/Staf',
+              },
+            ],
+            maksudTugas: `${parsed.isSPPD ? 'SPPD' : 'Surat Tugas'} Terkait: ${docLabel}`,
             tempatTujuan: 'Sesuai Dokumen',
-            tanggalBerangkat: file.createdTime ? file.createdTime.split('T')[0] : new Date().toISOString().split('T')[0],
-            tanggalKembali: file.createdTime ? file.createdTime.split('T')[0] : new Date().toISOString().split('T')[0],
+            tanggalBerangkat: fileDate,
+            tanggalKembali: fileDate,
             lamaHari: 1,
             alatAngkut: 'Kendaraan Umum',
             bebanAnggaran: 'Dana BOS SMPN 2 Puriala',
             status: 'Terbit',
-            tanggalSurat: file.createdTime ? file.createdTime.split('T')[0] : new Date().toISOString().split('T')[0],
+            tanggalSurat: fileDate,
             statusDrive: 'Tersimpan',
             driveFileId: file.id,
             driveWebViewLink: file.webViewLink,
@@ -322,9 +397,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
         }
       }
 
-      // Step 5: READ-ONLY rule: Update local application state ONLY.
-      // Dilarang mengubah, menimpa, atau mengirim data ke Drive/Sheet selama proses Sinkron / Tarik Data.
-      // Penulisan ke Google Drive HANYA dilakukan jika pengguna eksplisit menekan tombol 'Simpan ke Drive'.
+      // Step 5: READ-ONLY rule for Drive: Update local application state & automatically sync to Menu Surat Keluar via App onBatchUpdate
       if (onBatchUpdate) {
         onBatchUpdate(updatedList);
       }
@@ -333,6 +406,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
         total: updatedList.length,
         newAdded: newCount,
         filesCount: documentFiles.length,
+        duplicatesSkipped,
       };
     } catch (error: any) {
       console.error('Error in syncSuratTugasWithDrive:', error);
@@ -348,12 +422,19 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
 
     try {
       setIsScanningDriveBerkas(true);
-      setSyncFeedback({ message: 'Sedang memindai dan menyinkronkan seluruh berkas fisik dari Google Drive...', type: 'info' });
+      setSyncFeedback({
+        message: 'Sedang memindai folder TATA USAHA/07_ARSIP_DOKUMEN_SURAT dan menyinkronkan ke Menu Surat Keluar...',
+        type: 'info',
+      });
 
       const res = await syncSuratTugasWithDrive();
       if (res) {
+        const dupInfo =
+          res.duplicatesSkipped > 0
+            ? ` (${res.duplicatesSkipped} dokumen bernama ganda otomatis dipilih yang terbaru)`
+            : '';
         setSyncFeedback({
-          message: `Pemindaian Berkas Selesai! Berhasil mensinkronkan ${res.filesCount} file fisik dari Drive. Menambahkan ${res.newAdded} riwayat baru otomatis ke tabel.`,
+          message: `Pemindaian Berkas Selesai! Menemukan ${res.filesCount} berkas unik dari TATA USAHA/07_ARSIP_DOKUMEN_SURAT${dupInfo}. Menambahkan ${res.newAdded} riwayat baru ke tabel & Menu Surat Keluar.`,
           type: 'success',
         });
       }
@@ -377,8 +458,12 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
 
       const res = await syncSuratTugasWithDrive();
       if (res) {
+        const dupInfo =
+          res.duplicatesSkipped > 0
+            ? ` (${res.duplicatesSkipped} dokumen ganda dipilih versi terbaru)`
+            : '';
         setSyncFeedback({
-          message: `Berhasil menarik data! Sekarang total ada ${res.total} riwayat Surat Tugas di aplikasi (Menemukan ${res.filesCount} file fisik dan menambah ${res.newAdded} riwayat baru otomatis).`,
+          message: `Berhasil menarik data! Total ${res.total} riwayat Surat Tugas di aplikasi (${res.filesCount} berkas unik dari Drive${dupInfo}, +${res.newAdded} riwayat baru tersinkron ke Menu Surat Keluar).`,
           type: 'success',
         });
       }
@@ -808,10 +893,11 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
 
   const filtered = tugasList.filter(
     (t) =>
-      t.noSuratTugas.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      t.maksudTugas.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      t.tempatTujuan.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      t.personil.some((p) => p.nama.toLowerCase().includes(searchTerm.toLowerCase()))
+      (t.noSuratTugas || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (t.noSPPD || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (t.maksudTugas || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (t.tempatTujuan || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (t.personil || []).some((p) => (p.nama || '').toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   return (
@@ -1054,12 +1140,12 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                   <tr key={item.id} className="hover:bg-slate-50 transition">
                     <td className="py-3 px-3.5 font-mono">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-bold text-sky-800">{item.noSuratTugas}</span>
+                        <span className="font-bold text-sky-800">{item.noSuratTugas || item.noSPPD || '-'}</span>
                         <span className="text-[9px] bg-sky-100 text-sky-800 border border-sky-200 px-1.5 py-0.2 rounded font-semibold font-sans">
-                          Kode: {item.kodeKlasifikasi || item.noSuratTugas?.split('/')[0] || '090'}
+                          Kode: {item.kodeKlasifikasi || (item.noSuratTugas || item.noSPPD)?.split('/')[0] || '090'}
                         </span>
                       </div>
-                      {item.noSPPD && (
+                      {item.noSPPD && item.noSuratTugas && (
                         <div className="text-[10px] text-slate-500 font-mono mt-0.5">SPPD: {item.noSPPD}</div>
                       )}
                       <div className="text-[9px] text-emerald-700 font-sans flex items-center gap-1 mt-0.5">

@@ -64,6 +64,7 @@ import {
   GoogleDriveQuota,
   loadSuratTugasDataFromDrive,
   loadPembuatSuratDataFromDrive,
+  saveGuruPTKDataToDrive,
 } from './services/googleDrive';
 import { runCentralSync } from './services/centralSync';
 import { notifyGlobalSync, subscribeToGlobalSync } from './services/globalSync';
@@ -97,6 +98,16 @@ export default function App() {
   const isFirstSyncRef = React.useRef(true);
   const [isDriveDataLoaded, setIsDriveDataLoaded] = useState(false);
 
+  // Auto-sync status specifically for Google Sheet "Data Guru & PTK"
+  const [guruSheetSyncStatus, setGuruSheetSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
+  const [guruSheetInfo, setGuruSheetInfo] = useState<{
+    fileName: string;
+    webViewLink?: string;
+    lastUpdated?: string;
+  } | null>(null);
+  const pendingGuruSheetSyncRef = React.useRef(false);
+  const guruSheetSyncTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Show Toast helper
   const showToast = (message: string, type: 'info' | 'success' | 'error' = 'info', duration: number = 3500) => {
     setSyncToast({ message, type });
@@ -106,14 +117,25 @@ export default function App() {
   };
 
   // Synchronize state changes to localStorage and Firestore real-time status
-  const updateData = (newData: DatabaseState, moduleName?: string, actionType: 'CREATE' | 'UPDATE' | 'DRIVE_SYNC' = 'UPDATE') => {
-    setData(newData);
-    saveStoredData(newData);
-    if (moduleName) {
-      const email = googleUser?.email || googleUser?.displayName || 'spendupuriala@gmail.com';
-      notifyGlobalSync(moduleName, email, actionType);
-    }
-  };
+  const updateData = useCallback(
+    (
+      newDataOrUpdater: DatabaseState | ((prev: DatabaseState) => DatabaseState),
+      moduleName?: string,
+      actionType: 'CREATE' | 'UPDATE' | 'DRIVE_SYNC' = 'UPDATE'
+    ) => {
+      setData((prev) => {
+        const next =
+          typeof newDataOrUpdater === 'function' ? newDataOrUpdater(prev) : newDataOrUpdater;
+        saveStoredData(next);
+        return next;
+      });
+      if (moduleName) {
+        const email = googleUser?.email || googleUser?.displayName || 'spendupuriala@gmail.com';
+        notifyGlobalSync(moduleName, email, actionType);
+      }
+    },
+    [googleUser]
+  );
 
   // Refresh Google Drive Quota info
   const refreshQuota = useCallback(async (token: string) => {
@@ -196,30 +218,37 @@ export default function App() {
         if (!active) return;
 
         let hasChanges = false;
-        const updatedData = { ...data };
+        setData((prev) => {
+          const updatedData = { ...prev };
 
-        if (driveSuratTugas && Array.isArray(driveSuratTugas)) {
-          updatedData.suratTugas = driveSuratTugas;
-          hasChanges = true;
-        }
+          if (driveSuratTugas && Array.isArray(driveSuratTugas)) {
+            const driveIds = new Set(driveSuratTugas.map((d: any) => d.id));
+            const localOnly = (prev.suratTugas || []).filter((t) => !driveIds.has(t.id));
+            updatedData.suratTugas = [...driveSuratTugas, ...localOnly];
+            hasChanges = true;
+          }
 
-        if (drivePembuatSurat && Array.isArray(drivePembuatSurat)) {
-          updatedData.pembuatSurat = drivePembuatSurat;
-          hasChanges = true;
-        }
+          if (drivePembuatSurat && Array.isArray(drivePembuatSurat)) {
+            const driveIds = new Set(drivePembuatSurat.map((d: any) => d.id));
+            const localOnly = (prev.pembuatSurat || []).filter((p) => !driveIds.has(p.id));
+            updatedData.pembuatSurat = [...drivePembuatSurat, ...localOnly];
+            hasChanges = true;
+          }
+
+          if (hasChanges) {
+            updatedData.suratKeluar = syncAllModulesToSuratKeluar(
+              updatedData.suratKeluar || [],
+              updatedData.suratTugas || [],
+              updatedData.pembuatSurat || [],
+              updatedData.identitasSekolah
+            );
+            saveStoredData(updatedData);
+            return updatedData;
+          }
+          return prev;
+        });
 
         if (hasChanges) {
-          // Sync with Surat Keluar list
-          const syncedSuratKeluar = syncAllModulesToSuratKeluar(
-            updatedData.suratKeluar || [],
-            updatedData.suratTugas || [],
-            updatedData.pembuatSurat || [],
-            updatedData.identitasSekolah
-          );
-          updatedData.suratKeluar = syncedSuratKeluar;
-
-          setData(updatedData);
-          saveStoredData(updatedData);
           showToast('Arsip Surat Tugas dan Pembuat Surat diselaraskan dari Google Drive!', 'success');
         }
       } catch (err: any) {
@@ -279,24 +308,26 @@ export default function App() {
 
   // Initial Sync: Pastikan Surat Tugas dan Pembuat Surat tersinkronisasi ke Buku Agenda Surat Keluar saat aplikasi dimuat
   useEffect(() => {
-    if ((data.suratTugas && data.suratTugas.length > 0) || (data.pembuatSurat && data.pembuatSurat.length > 0)) {
-      const syncedSuratKeluar = syncAllModulesToSuratKeluar(
-        data.suratKeluar || [],
-        data.suratTugas || [],
-        data.pembuatSurat || [],
-        data.identitasSekolah
-      );
+    setData((prev) => {
+      if ((prev.suratTugas && prev.suratTugas.length > 0) || (prev.pembuatSurat && prev.pembuatSurat.length > 0)) {
+        const syncedSuratKeluar = syncAllModulesToSuratKeluar(
+          prev.suratKeluar || [],
+          prev.suratTugas || [],
+          prev.pembuatSurat || [],
+          prev.identitasSekolah
+        );
 
-      // Cek apakah ada perubahan jumlah / isi entri
-      if (syncedSuratKeluar.length !== (data.suratKeluar || []).length) {
-        const updated = {
-          ...data,
-          suratKeluar: syncedSuratKeluar,
-        };
-        setData(updated);
-        saveStoredData(updated);
+        if (JSON.stringify(syncedSuratKeluar) !== JSON.stringify(prev.suratKeluar || [])) {
+          const updated = {
+            ...prev,
+            suratKeluar: syncedSuratKeluar,
+          };
+          saveStoredData(updated);
+          return updated;
+        }
       }
-    }
+      return prev;
+    });
   }, []);
 
   // Connect Google Drive
@@ -315,33 +346,42 @@ export default function App() {
           loadPembuatSuratDataFromDrive(res.accessToken),
         ]);
 
-        let hasChanges = false;
-        const updatedData = { ...data };
+        let syncedSnapshot: DatabaseState = data;
+        setData((prev) => {
+          let hasChanges = false;
+          const updatedData = { ...prev };
 
-        if (driveSuratTugas && Array.isArray(driveSuratTugas)) {
-          updatedData.suratTugas = driveSuratTugas;
-          hasChanges = true;
-        }
+          if (driveSuratTugas && Array.isArray(driveSuratTugas)) {
+            const driveIds = new Set(driveSuratTugas.map((d: any) => d.id));
+            const localOnly = (prev.suratTugas || []).filter((t) => !driveIds.has(t.id));
+            updatedData.suratTugas = [...driveSuratTugas, ...localOnly];
+            hasChanges = true;
+          }
 
-        if (drivePembuatSurat && Array.isArray(drivePembuatSurat)) {
-          updatedData.pembuatSurat = drivePembuatSurat;
-          hasChanges = true;
-        }
+          if (drivePembuatSurat && Array.isArray(drivePembuatSurat)) {
+            const driveIds = new Set(drivePembuatSurat.map((d: any) => d.id));
+            const localOnly = (prev.pembuatSurat || []).filter((p) => !driveIds.has(p.id));
+            updatedData.pembuatSurat = [...drivePembuatSurat, ...localOnly];
+            hasChanges = true;
+          }
 
-        if (hasChanges) {
-          const syncedSuratKeluar = syncAllModulesToSuratKeluar(
-            updatedData.suratKeluar || [],
-            updatedData.suratTugas || [],
-            updatedData.pembuatSurat || [],
-            updatedData.identitasSekolah
-          );
-          updatedData.suratKeluar = syncedSuratKeluar;
-          setData(updatedData);
-          saveStoredData(updatedData);
-        }
+          if (hasChanges) {
+            updatedData.suratKeluar = syncAllModulesToSuratKeluar(
+              updatedData.suratKeluar || [],
+              updatedData.suratTugas || [],
+              updatedData.pembuatSurat || [],
+              updatedData.identitasSekolah
+            );
+            saveStoredData(updatedData);
+            syncedSnapshot = updatedData;
+            return updatedData;
+          }
+          syncedSnapshot = prev;
+          return prev;
+        });
 
         // Immediately sync to TATA USAHA folder with the latest integrated state
-        await syncLiveDatabaseToTataUsahaFolder(res.accessToken, hasChanges ? updatedData : data);
+        await syncLiveDatabaseToTataUsahaFolder(res.accessToken, syncedSnapshot);
         setIsDriveDataLoaded(true);
 
         setAutoSyncStatus('synced');
@@ -421,359 +461,542 @@ export default function App() {
 
   // Surat Masuk CRUD
   const handleAddSuratMasuk = (surat: SuratMasuk) => {
-    const updated = {
-      ...data,
-      suratMasuk: [...data.suratMasuk, surat],
-    };
-    updateData(updated, 'Surat Masuk', 'CREATE');
+    updateData(
+      (prev) => ({
+        ...prev,
+        suratMasuk: [...prev.suratMasuk, surat],
+      }),
+      'Surat Masuk',
+      'CREATE'
+    );
   };
 
   const handleBatchSuratMasuk = (newList: SuratMasuk[], mode: 'replace' | 'merge') => {
-    let updatedList: SuratMasuk[];
-    if (mode === 'replace') {
-      updatedList = newList;
-    } else {
-      // Merge by noSurat
-      const existingNoSuratSet = new Set(data.suratMasuk.map((s) => s.noSurat.toLowerCase().trim()));
-      const filteredNew = newList.filter((s) => !existingNoSuratSet.has(s.noSurat.toLowerCase().trim()));
-      updatedList = [...data.suratMasuk, ...filteredNew];
-    }
-    const updated = {
-      ...data,
-      suratMasuk: updatedList,
-    };
-    updateData(updated, 'Surat Masuk', 'DRIVE_SYNC');
+    updateData(
+      (prev) => {
+        let updatedList: SuratMasuk[];
+        if (mode === 'replace') {
+          updatedList = newList;
+        } else {
+          const existingNoSuratSet = new Set(prev.suratMasuk.map((s) => s.noSurat.toLowerCase().trim()));
+          const filteredNew = newList.filter((s) => !existingNoSuratSet.has(s.noSurat.toLowerCase().trim()));
+          updatedList = [...prev.suratMasuk, ...filteredNew];
+        }
+        return {
+          ...prev,
+          suratMasuk: updatedList,
+        };
+      },
+      'Surat Masuk',
+      'DRIVE_SYNC'
+    );
   };
 
   const handleUpdateSuratMasuk = (surat: SuratMasuk) => {
-    const updated = {
-      ...data,
-      suratMasuk: data.suratMasuk.map((s) => (s.id === surat.id ? surat : s)),
-    };
-    updateData(updated, 'Surat Masuk', 'UPDATE');
+    updateData(
+      (prev) => ({
+        ...prev,
+        suratMasuk: prev.suratMasuk.map((s) => (s.id === surat.id ? surat : s)),
+      }),
+      'Surat Masuk',
+      'UPDATE'
+    );
   };
 
   const handleDeleteSuratMasuk = (id: string) => {
-    const updated = {
-      ...data,
-      suratMasuk: data.suratMasuk.filter((s) => s.id !== id),
-    };
-    updateData(updated, 'Surat Masuk', 'UPDATE');
+    updateData(
+      (prev) => ({
+        ...prev,
+        suratMasuk: prev.suratMasuk.filter((s) => s.id !== id),
+      }),
+      'Surat Masuk',
+      'UPDATE'
+    );
   };
 
   // Surat Keluar CRUD
   const handleAddSuratKeluar = (surat: SuratKeluar) => {
-    // Cek apakah surat sudah ada di list (berdasarkan id, noSurat, atau penanda SK ASTS)
-    const existingIndex = data.suratKeluar.findIndex(
-      (s) =>
-        s.id === surat.id ||
-        (s.noSurat && surat.noSurat && s.noSurat === surat.noSurat) ||
-        (s.id?.startsWith('sk-panitia-asts') && surat.id?.startsWith('sk-panitia-asts')) ||
-        (s.noAgenda && surat.noAgenda && s.noAgenda.includes('SK-ASTS') && surat.noAgenda.includes('SK-ASTS'))
+    let wasExisting = false;
+    updateData(
+      (prev) => {
+        const existingIndex = prev.suratKeluar.findIndex(
+          (s) =>
+            s.id === surat.id ||
+            (s.noSurat && surat.noSurat && s.noSurat === surat.noSurat) ||
+            (s.id?.startsWith('sk-panitia-asts') && surat.id?.startsWith('sk-panitia-asts')) ||
+            (s.noAgenda && surat.noAgenda && s.noAgenda.includes('SK-ASTS') && surat.noAgenda.includes('SK-ASTS'))
+        );
+        wasExisting = existingIndex !== -1;
+
+        let updatedList: SuratKeluar[];
+        if (existingIndex !== -1) {
+          updatedList = [...prev.suratKeluar];
+          updatedList[existingIndex] = surat;
+        } else {
+          updatedList = [...prev.suratKeluar, surat];
+        }
+
+        return {
+          ...prev,
+          suratKeluar: updatedList,
+        };
+      },
+      'Surat Keluar',
+      wasExisting ? 'UPDATE' : 'CREATE'
     );
-
-    let updatedList: SuratKeluar[];
-    if (existingIndex !== -1) {
-      // Ganti baris yang sudah ada untuk perbaikannya
-      updatedList = [...data.suratKeluar];
-      updatedList[existingIndex] = surat;
-    } else {
-      updatedList = [...data.suratKeluar, surat];
-    }
-
-    const updated = {
-      ...data,
-      suratKeluar: updatedList,
-    };
-    updateData(updated, 'Surat Keluar', existingIndex !== -1 ? 'UPDATE' : 'CREATE');
   };
 
   const handleBatchSuratKeluar = (newList: SuratKeluar[], mode: 'replace' | 'merge') => {
-    let updatedList: SuratKeluar[];
-    if (mode === 'replace') {
-      updatedList = newList;
-    } else {
-      // Merge by noSurat
-      const existingNoSuratSet = new Set(data.suratKeluar.map((s) => s.noSurat.toLowerCase().trim()));
-      const filteredNew = newList.filter((s) => !existingNoSuratSet.has(s.noSurat.toLowerCase().trim()));
-      updatedList = [...data.suratKeluar, ...filteredNew];
-    }
-    const updated = {
-      ...data,
-      suratKeluar: updatedList,
-    };
-    updateData(updated, 'Surat Keluar', 'DRIVE_SYNC');
+    updateData(
+      (prev) => {
+        let updatedList: SuratKeluar[];
+        if (mode === 'replace') {
+          updatedList = newList;
+        } else {
+          const existingNoSuratSet = new Set(prev.suratKeluar.map((s) => s.noSurat.toLowerCase().trim()));
+          const filteredNew = newList.filter((s) => !existingNoSuratSet.has(s.noSurat.toLowerCase().trim()));
+          updatedList = [...prev.suratKeluar, ...filteredNew];
+        }
+        return {
+          ...prev,
+          suratKeluar: updatedList,
+        };
+      },
+      'Surat Keluar',
+      'DRIVE_SYNC'
+    );
   };
 
   const handleUpdateSuratKeluar = (surat: SuratKeluar) => {
-    const updated = {
-      ...data,
-      suratKeluar: data.suratKeluar.map((s) => (s.id === surat.id ? surat : s)),
-    };
-    updateData(updated, 'Surat Keluar', 'UPDATE');
+    updateData(
+      (prev) => ({
+        ...prev,
+        suratKeluar: prev.suratKeluar.map((s) => (s.id === surat.id ? surat : s)),
+      }),
+      'Surat Keluar',
+      'UPDATE'
+    );
   };
 
   const handleDeleteSuratKeluar = (id: string) => {
-    const updated = {
-      ...data,
-      suratKeluar: data.suratKeluar.filter((s) => s.id !== id),
-    };
-    updateData(updated, 'Surat Keluar', 'UPDATE');
+    updateData(
+      (prev) => ({
+        ...prev,
+        suratKeluar: prev.suratKeluar.filter((s) => s.id !== id),
+      }),
+      'Surat Keluar',
+      'UPDATE'
+    );
   };
 
   // SK KBM CRUD
   const handleAddSKKBM = (sk: SKKBM) => {
-    const updated = {
-      ...data,
-      skKBM: [sk, ...data.skKBM],
-    };
-    updateData(updated, 'SK KBM & Beban Jam', 'CREATE');
+    updateData(
+      (prev) => ({
+        ...prev,
+        skKBM: [sk, ...prev.skKBM],
+      }),
+      'SK KBM & Beban Jam',
+      'CREATE'
+    );
   };
 
   const handleUpdateSKKBM = (sk: SKKBM) => {
-    const updated = {
-      ...data,
-      skKBM: data.skKBM.map((item) => (item.id === sk.id ? sk : item)),
-    };
-    updateData(updated, 'SK KBM & Beban Jam', 'UPDATE');
+    updateData(
+      (prev) => ({
+        ...prev,
+        skKBM: prev.skKBM.map((item) => (item.id === sk.id ? sk : item)),
+      }),
+      'SK KBM & Beban Jam',
+      'UPDATE'
+    );
   };
 
   const handleDeleteSKKBM = (id: string) => {
-    const updated = {
-      ...data,
-      skKBM: data.skKBM.filter((item) => item.id !== id),
-    };
-    updateData(updated, 'SK KBM & Beban Jam', 'UPDATE');
+    updateData(
+      (prev) => ({
+        ...prev,
+        skKBM: prev.skKBM.filter((item) => item.id !== id),
+      }),
+      'SK KBM & Beban Jam',
+      'UPDATE'
+    );
   };
 
   // SK Tugas Tambahan CRUD
   const handleAddSKTT = (sk: SKTugasTambahan) => {
-    const updated = {
-      ...data,
-      skTugasTambahan: [sk, ...data.skTugasTambahan],
-    };
-    updateData(updated, 'SK Tugas Tambahan', 'CREATE');
+    updateData(
+      (prev) => ({
+        ...prev,
+        skTugasTambahan: [sk, ...prev.skTugasTambahan],
+      }),
+      'SK Tugas Tambahan',
+      'CREATE'
+    );
   };
 
   const handleUpdateSKTT = (sk: SKTugasTambahan) => {
-    const updated = {
-      ...data,
-      skTugasTambahan: data.skTugasTambahan.map((item) => (item.id === sk.id ? sk : item)),
-    };
-    updateData(updated, 'SK Tugas Tambahan', 'UPDATE');
+    updateData(
+      (prev) => ({
+        ...prev,
+        skTugasTambahan: prev.skTugasTambahan.map((item) => (item.id === sk.id ? sk : item)),
+      }),
+      'SK Tugas Tambahan',
+      'UPDATE'
+    );
   };
 
   const handleDeleteSKTT = (id: string) => {
-    const updated = {
-      ...data,
-      skTugasTambahan: data.skTugasTambahan.filter((item) => item.id !== id),
-    };
-    updateData(updated, 'SK Tugas Tambahan', 'UPDATE');
+    updateData(
+      (prev) => ({
+        ...prev,
+        skTugasTambahan: prev.skTugasTambahan.filter((item) => item.id !== id),
+      }),
+      'SK Tugas Tambahan',
+      'UPDATE'
+    );
   };
 
   const handleReorderSKTT = (newList: SKTugasTambahan[]) => {
-    const updated = {
-      ...data,
+    updateData((prev) => ({
+      ...prev,
       skTugasTambahan: newList,
-    };
-    updateData(updated);
+    }));
   };
 
   // SK Panitia ASTS Handler
   const handleSaveSKPanitiaASTS = (sk: SKPanitiaASTS) => {
-    const existing = data.skPanitiaASTS || [];
-    const idx = existing.findIndex((s) => s.id === sk.id || s.noSK === sk.noSK);
-    const updatedList = idx >= 0
-      ? existing.map((s, i) => (i === idx ? sk : s))
-      : [...existing, sk];
-
-    const updated = {
-      ...data,
-      skPanitiaASTS: updatedList,
-    };
-    updateData(updated, 'SK Panitia ASTS / UTS', 'UPDATE');
+    updateData(
+      (prev) => {
+        const existing = prev.skPanitiaASTS || [];
+        const idx = existing.findIndex((s) => s.id === sk.id || s.noSK === sk.noSK);
+        const updatedList = idx >= 0 ? existing.map((s, i) => (i === idx ? sk : s)) : [...existing, sk];
+        return {
+          ...prev,
+          skPanitiaASTS: updatedList,
+        };
+      },
+      'SK Panitia ASTS / UTS',
+      'UPDATE'
+    );
   };
 
-  // Surat Tugas Dinas CRUD (Synchronized with Surat Keluar agenda)
+  // Surat Tugas Dinas CRUD (Synchronized with Surat Keluar agenda using functional state updates)
   const handleAddSuratTugas = (item: SuratTugasDinas) => {
-    const updatedSuratKeluar = upsertSuratTugasInSuratKeluar(data.suratKeluar, item, data.identitasSekolah);
-    const updated = {
-      ...data,
-      suratTugas: [item, ...data.suratTugas],
-      suratKeluar: updatedSuratKeluar,
-    };
-    updateData(updated, 'Surat Tugas Dinas/SPT', 'CREATE');
-    showToast(`Surat Tugas "${item.noSuratTugas}" tersinkronisasi ke Buku Agenda Surat Keluar`, 'success');
+    updateData(
+      (prev) => {
+        const updatedSuratKeluar = upsertSuratTugasInSuratKeluar(
+          prev.suratKeluar || [],
+          item,
+          prev.identitasSekolah
+        );
+        const filteredExisting = (prev.suratTugas || []).filter((t) => t.id !== item.id);
+        return {
+          ...prev,
+          suratTugas: [item, ...filteredExisting],
+          suratKeluar: updatedSuratKeluar,
+        };
+      },
+      'Surat Tugas Dinas/SPT',
+      'CREATE'
+    );
+    showToast(`Surat Tugas "${item.noSuratTugas || item.noSPPD}" otomatis tercatat di Menu Surat Keluar`, 'success');
   };
 
   const handleUpdateSuratTugas = (item: SuratTugasDinas) => {
-    const updatedSuratKeluar = upsertSuratTugasInSuratKeluar(data.suratKeluar, item, data.identitasSekolah);
-    const updated = {
-      ...data,
-      suratTugas: data.suratTugas.map((t) => (t.id === item.id ? item : t)),
-      suratKeluar: updatedSuratKeluar,
-    };
-    updateData(updated, 'Surat Tugas Dinas/SPT', 'UPDATE');
-    showToast(`Surat Tugas "${item.noSuratTugas}" berhasil diperbarui dan disinkronkan`, 'info');
+    updateData(
+      (prev) => {
+        const updatedSuratKeluar = upsertSuratTugasInSuratKeluar(
+          prev.suratKeluar || [],
+          item,
+          prev.identitasSekolah
+        );
+        const currentList = prev.suratTugas || [];
+        const exists = currentList.some((t) => t.id === item.id);
+        const updatedSuratTugas = exists
+          ? currentList.map((t) => (t.id === item.id ? item : t))
+          : [item, ...currentList];
+        return {
+          ...prev,
+          suratTugas: updatedSuratTugas,
+          suratKeluar: updatedSuratKeluar,
+        };
+      },
+      'Surat Tugas Dinas/SPT',
+      'UPDATE'
+    );
+    showToast(`Surat Tugas "${item.noSuratTugas || item.noSPPD}" berhasil diperbarui dan tercatat di Surat Keluar`, 'info');
   };
 
   const handleDeleteSuratTugas = (id: string) => {
-    const updatedSuratKeluar = removeModuleFromSuratKeluar(data.suratKeluar, id);
-    const updated = {
-      ...data,
-      suratTugas: data.suratTugas.filter((t) => t.id !== id),
-      suratKeluar: updatedSuratKeluar,
-    };
-    updateData(updated, 'Surat Tugas Dinas/SPT', 'UPDATE');
+    updateData(
+      (prev) => ({
+        ...prev,
+        suratTugas: (prev.suratTugas || []).filter((t) => t.id !== id),
+        suratKeluar: removeModuleFromSuratKeluar(prev.suratKeluar || [], id),
+      }),
+      'Surat Tugas Dinas/SPT',
+      'UPDATE'
+    );
     showToast('Surat Tugas berhasil dihapus dari arsip dan agenda keluar', 'info');
   };
 
-  // Pembuat Surat CRUD (Synchronized with Surat Keluar agenda)
+  // Pembuat Surat CRUD (Synchronized with Surat Keluar agenda using functional state updates)
   const handleAddPembuatSurat = (surat: PembuatSuratRecord) => {
-    const updatedSuratKeluar = upsertPembuatSuratInSuratKeluar(data.suratKeluar, surat, data.identitasSekolah);
-    const updated = {
-      ...data,
-      pembuatSurat: [surat, ...(data.pembuatSurat || [])],
-      suratKeluar: updatedSuratKeluar,
-    };
-    updateData(updated, 'Pembuat Surat', 'CREATE');
-    showToast(`Dokumen "${surat.noSurat}" tersinkronisasi ke Buku Agenda Surat Keluar`, 'success');
+    updateData(
+      (prev) => {
+        const updatedSuratKeluar = upsertPembuatSuratInSuratKeluar(
+          prev.suratKeluar || [],
+          surat,
+          prev.identitasSekolah
+        );
+        const filteredExisting = (prev.pembuatSurat || []).filter((s) => s.id !== surat.id);
+        return {
+          ...prev,
+          pembuatSurat: [surat, ...filteredExisting],
+          suratKeluar: updatedSuratKeluar,
+        };
+      },
+      'Pembuat Surat',
+      'CREATE'
+    );
+    showToast(`Dokumen "${surat.noSurat}" otomatis tercatat di Menu Surat Keluar`, 'success');
   };
 
   const handleUpdatePembuatSurat = (surat: PembuatSuratRecord) => {
-    const updatedSuratKeluar = upsertPembuatSuratInSuratKeluar(data.suratKeluar, surat, data.identitasSekolah);
-    const updated = {
-      ...data,
-      pembuatSurat: (data.pembuatSurat || []).map((s) => (s.id === surat.id ? surat : s)),
-      suratKeluar: updatedSuratKeluar,
-    };
-    updateData(updated, 'Pembuat Surat', 'UPDATE');
-    showToast(`Dokumen "${surat.noSurat}" berhasil diperbarui dan disinkronkan`, 'info');
+    updateData(
+      (prev) => {
+        const updatedSuratKeluar = upsertPembuatSuratInSuratKeluar(
+          prev.suratKeluar || [],
+          surat,
+          prev.identitasSekolah
+        );
+        const currentList = prev.pembuatSurat || [];
+        const exists = currentList.some((s) => s.id === surat.id);
+        const updatedPembuatSurat = exists
+          ? currentList.map((s) => (s.id === surat.id ? surat : s))
+          : [surat, ...currentList];
+        return {
+          ...prev,
+          pembuatSurat: updatedPembuatSurat,
+          suratKeluar: updatedSuratKeluar,
+        };
+      },
+      'Pembuat Surat',
+      'UPDATE'
+    );
+    showToast(`Dokumen "${surat.noSurat}" berhasil diperbarui dan tercatat di Surat Keluar`, 'info');
   };
 
   const handleDeletePembuatSurat = (id: string) => {
-    const updatedSuratKeluar = removeModuleFromSuratKeluar(data.suratKeluar, id);
-    const updated = {
-      ...data,
-      pembuatSurat: (data.pembuatSurat || []).filter((s) => s.id !== id),
-      suratKeluar: updatedSuratKeluar,
-    };
-    updateData(updated, 'Pembuat Surat', 'UPDATE');
+    updateData(
+      (prev) => ({
+        ...prev,
+        pembuatSurat: (prev.pembuatSurat || []).filter((s) => s.id !== id),
+        suratKeluar: removeModuleFromSuratKeluar(prev.suratKeluar || [], id),
+      }),
+      'Pembuat Surat',
+      'UPDATE'
+    );
     showToast('Dokumen berhasil dihapus dari pembuat surat dan agenda keluar', 'info');
   };
 
   // Siswa CRUD
   const handleAddSiswa = (siswa: Siswa) => {
-    const updated = {
-      ...data,
-      siswa: [siswa, ...data.siswa],
-    };
-    updateData(updated, 'Buku Induk Siswa', 'CREATE');
+    updateData(
+      (prev) => ({
+        ...prev,
+        siswa: [siswa, ...prev.siswa],
+      }),
+      'Buku Induk Siswa',
+      'CREATE'
+    );
   };
 
   const handleBatchSiswa = (newList: Siswa[], mode: 'replace' | 'merge' = 'replace') => {
-    let updatedList: Siswa[];
-    if (mode === 'replace') {
-      updatedList = newList;
-    } else {
-      const existingKeySet = new Set(data.siswa.map((s) => (s.nisn || s.nis || s.namaLengkap).toLowerCase().trim()));
-      const filteredNew = newList.filter((s) => !existingKeySet.has((s.nisn || s.nis || s.namaLengkap).toLowerCase().trim()));
-      updatedList = [...data.siswa, ...filteredNew];
-    }
-    const updated = {
-      ...data,
-      siswa: updatedList,
-    };
-    updateData(updated, 'Buku Induk Siswa', 'DRIVE_SYNC');
+    updateData(
+      (prev) => {
+        let updatedList: Siswa[];
+        if (mode === 'replace') {
+          updatedList = newList;
+        } else {
+          const existingKeySet = new Set(prev.siswa.map((s) => (s.nisn || s.nis || s.namaLengkap).toLowerCase().trim()));
+          const filteredNew = newList.filter((s) => !existingKeySet.has((s.nisn || s.nis || s.namaLengkap).toLowerCase().trim()));
+          updatedList = [...prev.siswa, ...filteredNew];
+        }
+        return {
+          ...prev,
+          siswa: updatedList,
+        };
+      },
+      'Buku Induk Siswa',
+      'DRIVE_SYNC'
+    );
   };
 
   const handleUpdateSiswa = (siswa: Siswa) => {
-    const updated = {
-      ...data,
-      siswa: data.siswa.map((s) => (s.id === siswa.id ? siswa : s)),
-    };
-    updateData(updated, 'Buku Induk Siswa', 'UPDATE');
+    updateData(
+      (prev) => ({
+        ...prev,
+        siswa: prev.siswa.map((s) => (s.id === siswa.id ? siswa : s)),
+      }),
+      'Buku Induk Siswa',
+      'UPDATE'
+    );
   };
 
   const handleDeleteSiswa = (id: string) => {
-    const updated = {
-      ...data,
-      siswa: data.siswa.filter((s) => s.id !== id),
-    };
-    updateData(updated, 'Buku Induk Siswa', 'UPDATE');
+    updateData(
+      (prev) => ({
+        ...prev,
+        siswa: prev.siswa.filter((s) => s.id !== id),
+      }),
+      'Buku Induk Siswa',
+      'UPDATE'
+    );
   };
 
   // Alumni CRUD
   const handleAddAlumni = (alumni: AlumniIjazah) => {
-    const updated = {
-      ...data,
-      alumni: [alumni, ...data.alumni],
-    };
-    updateData(updated, 'Buku Induk Siswa', 'CREATE');
+    updateData(
+      (prev) => ({
+        ...prev,
+        alumni: [alumni, ...prev.alumni],
+      }),
+      'Buku Induk Siswa',
+      'CREATE'
+    );
   };
 
   const handleUpdateAlumni = (alumni: AlumniIjazah) => {
-    const updated = {
-      ...data,
-      alumni: data.alumni.map((a) => (a.id === alumni.id ? alumni : a)),
-    };
-    updateData(updated, 'Buku Induk Siswa', 'UPDATE');
+    updateData(
+      (prev) => ({
+        ...prev,
+        alumni: prev.alumni.map((a) => (a.id === alumni.id ? alumni : a)),
+      }),
+      'Buku Induk Siswa',
+      'UPDATE'
+    );
   };
 
   const handleDeleteAlumni = (id: string) => {
-    const updated = {
-      ...data,
-      alumni: data.alumni.filter((a) => a.id !== id),
-    };
-    updateData(updated, 'Buku Induk Siswa', 'UPDATE');
+    updateData(
+      (prev) => ({
+        ...prev,
+        alumni: prev.alumni.filter((a) => a.id !== id),
+      }),
+      'Buku Induk Siswa',
+      'UPDATE'
+    );
   };
 
-  // PTK CRUD
+  // PTK CRUD (Every change automatically records to Google Sheet "Data Guru & PTK")
   const handleAddGuru = (guru: GuruPTK) => {
-    const updated = {
-      ...data,
-      guruPTK: [guru, ...data.guruPTK],
-    };
-    updateData(updated, 'Data Guru & PTK', 'CREATE');
+    pendingGuruSheetSyncRef.current = true;
+    updateData(
+      (prev) => ({
+        ...prev,
+        guruPTK: [guru, ...prev.guruPTK],
+      }),
+      'Data Guru & PTK',
+      'CREATE'
+    );
   };
 
   const handleUpdateGuru = (guru: GuruPTK) => {
-    const updated = {
-      ...data,
-      guruPTK: data.guruPTK.map((g) => (g.id === guru.id ? guru : g)),
-    };
-    updateData(updated, 'Data Guru & PTK', 'UPDATE');
+    pendingGuruSheetSyncRef.current = true;
+    updateData(
+      (prev) => ({
+        ...prev,
+        guruPTK: prev.guruPTK.map((g) => (g.id === guru.id ? guru : g)),
+      }),
+      'Data Guru & PTK',
+      'UPDATE'
+    );
   };
 
   const handleDeleteGuru = (id: string) => {
-    const updated = {
-      ...data,
-      guruPTK: data.guruPTK.filter((g) => g.id !== id),
-    };
-    updateData(updated, 'Data Guru & PTK', 'UPDATE');
+    pendingGuruSheetSyncRef.current = true;
+    updateData(
+      (prev) => ({
+        ...prev,
+        guruPTK: prev.guruPTK.filter((g) => g.id !== id),
+      }),
+      'Data Guru & PTK',
+      'UPDATE'
+    );
   };
 
   const handleReorderGuru = (newList: GuruPTK[]) => {
-    const updated = {
-      ...data,
-      guruPTK: newList,
-    };
-    updateData(updated);
+    pendingGuruSheetSyncRef.current = true;
+    updateData(
+      (prev) => ({
+        ...prev,
+        guruPTK: newList,
+      }),
+      'Data Guru & PTK',
+      'UPDATE'
+    );
   };
+
+  // Auto-record any changes in Data Guru & PTK to Google Sheet "Data Guru & PTK"
+  useEffect(() => {
+    if (!pendingGuruSheetSyncRef.current) return;
+    if (!googleToken) {
+      pendingGuruSheetSyncRef.current = false;
+      return;
+    }
+
+    pendingGuruSheetSyncRef.current = false;
+    if (guruSheetSyncTimerRef.current) {
+      clearTimeout(guruSheetSyncTimerRef.current);
+    }
+
+    setGuruSheetSyncStatus('syncing');
+    guruSheetSyncTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await saveGuruPTKDataToDrive(googleToken, data.guruPTK);
+        setGuruSheetSyncStatus('synced');
+        setGuruSheetInfo({
+          fileName: res.fileName,
+          webViewLink: res.webViewLink,
+          lastUpdated: res.lastUpdated,
+        });
+        showToast(
+          `Perubahan Data Guru & PTK otomatis tercatat ke Sheet "${res.fileName}"`,
+          'success'
+        );
+      } catch (err: any) {
+        console.warn('Auto sync Data Guru & PTK ke Sheet gagal:', err);
+        setGuruSheetSyncStatus('error');
+        showToast(
+          err?.message || 'Gagal mencatat otomatis perubahan ke Sheet "Data Guru & PTK".',
+          'error'
+        );
+      }
+    }, 600);
+  }, [data.guruPTK, googleToken]);
+
+  useEffect(() => {
+    return () => {
+      if (guruSheetSyncTimerRef.current) {
+        clearTimeout(guruSheetSyncTimerRef.current);
+      }
+    };
+  }, []);
 
   // Drive CRUD (Local)
   const handleAddFolder = (folder: DriveFolder) => {
-    const updated = {
-      ...data,
-      driveFolders: [...data.driveFolders, folder],
-    };
-    updateData(updated);
+    updateData((prev) => ({
+      ...prev,
+      driveFolders: [...prev.driveFolders, folder],
+    }));
   };
 
   const handleAddFileToFolder = (folderId: string, file: DriveFile) => {
-    const updated = {
-      ...data,
-      driveFolders: data.driveFolders.map((f) => {
+    updateData((prev) => ({
+      ...prev,
+      driveFolders: prev.driveFolders.map((f) => {
         if (f.id === folderId) {
           return {
             ...f,
@@ -783,17 +1006,15 @@ export default function App() {
         }
         return f;
       }),
-    };
-    updateData(updated);
+    }));
   };
 
   // Identitas Sekolah Update
   const handleUpdateIdentitas = (identitas: IdentitasSekolah) => {
-    const updated = {
-      ...data,
+    updateData((prev) => ({
+      ...prev,
       identitasSekolah: identitas,
-    };
-    updateData(updated);
+    }));
   };
 
   const handleResetData = () => {
@@ -1071,18 +1292,20 @@ export default function App() {
                 onConnectGoogle={handleConnectGoogle}
                 kodeKlasifikasiList={kodeKlasifikasiList}
                 onBatchUpdate={(newList) => {
-                  const syncedSuratKeluar = syncAllModulesToSuratKeluar(
-                    data.suratKeluar || [],
-                    newList,
-                    data.pembuatSurat || [],
-                    data.identitasSekolah
-                  );
-                  updateData({
-                    ...data,
-                    suratTugas: newList,
-                    suratKeluar: syncedSuratKeluar
+                  updateData((prev) => {
+                    const syncedSuratKeluar = syncAllModulesToSuratKeluar(
+                      prev.suratKeluar || [],
+                      newList,
+                      prev.pembuatSurat || [],
+                      prev.identitasSekolah
+                    );
+                    return {
+                      ...prev,
+                      suratTugas: newList,
+                      suratKeluar: syncedSuratKeluar,
+                    };
                   });
-                  showToast(`Berhasil menyelaraskan ${newList.length} data Surat Tugas Dinas!`, 'success');
+                  showToast(`Berhasil menyelaraskan ${newList.length} data Surat Tugas Dinas & Menu Surat Keluar!`, 'success');
                 }}
               />
             )}
@@ -1106,18 +1329,20 @@ export default function App() {
                 onConnectGoogle={handleConnectGoogle}
                 kodeKlasifikasiList={kodeKlasifikasiList}
                 onBatchUpdate={(newList) => {
-                  const syncedSuratKeluar = syncAllModulesToSuratKeluar(
-                    data.suratKeluar || [],
-                    data.suratTugas || [],
-                    newList,
-                    data.identitasSekolah
-                  );
-                  updateData({
-                    ...data,
-                    pembuatSurat: newList,
-                    suratKeluar: syncedSuratKeluar
+                  updateData((prev) => {
+                    const syncedSuratKeluar = syncAllModulesToSuratKeluar(
+                      prev.suratKeluar || [],
+                      prev.suratTugas || [],
+                      newList,
+                      prev.identitasSekolah
+                    );
+                    return {
+                      ...prev,
+                      pembuatSurat: newList,
+                      suratKeluar: syncedSuratKeluar,
+                    };
                   });
-                  showToast(`Berhasil menyelaraskan ${newList.length} data Pembuat Surat!`, 'success');
+                  showToast(`Berhasil menyelaraskan ${newList.length} data Pembuat Surat & Menu Surat Keluar!`, 'success');
                 }}
               />
             )}
@@ -1165,8 +1390,18 @@ export default function App() {
                 isGoogleConnected={isGoogleConnected}
                 isGoogleLoading={isGoogleLoading}
                 onConnectGoogle={handleConnectGoogle}
+                guruSheetSyncStatus={guruSheetSyncStatus}
+                guruSheetInfo={guruSheetInfo}
+                onSheetSynced={(info) => {
+                  setGuruSheetInfo(info);
+                  setGuruSheetSyncStatus('synced');
+                }}
                 onBatchUpdate={(newList) => {
-                  updateData({ ...data, guruPTK: newList });
+                  updateData(
+                    (prev) => ({ ...prev, guruPTK: newList }),
+                    'Data Guru & PTK',
+                    'DRIVE_SYNC'
+                  );
                   showToast(`Berhasil memperbarui ${newList.length} data Guru & PTK dari Google Drive!`, 'success');
                 }}
               />

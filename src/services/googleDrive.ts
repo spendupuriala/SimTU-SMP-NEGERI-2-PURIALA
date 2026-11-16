@@ -1093,40 +1093,64 @@ export const fetchArsipDokumenFiles = async (accessToken: string): Promise<Googl
   if (!accessToken) return [];
   try {
     const archiveFolderId = await findOrCreateArsipDokumenSuratFolder(accessToken);
-    let allFiles: GoogleDriveFile[] = [];
-    let nextPageToken: string | null = null;
 
-    do {
-      const query = `'${archiveFolderId}' in parents and trashed = false`;
-      const params = new URLSearchParams({
-        q: query,
-        fields: 'nextPageToken, files(id, name, mimeType, size, webViewLink, webContentLink, iconLink, createdTime, modifiedTime)',
-        orderBy: 'modifiedTime desc',
-        pageSize: '100',
-      });
-      if (nextPageToken) {
-        params.append('pageToken', nextPageToken);
+    const fetchFolderChildren = async (folderId: string): Promise<GoogleDriveFile[]> => {
+      let folderFiles: GoogleDriveFile[] = [];
+      let nextPageToken: string | null = null;
+
+      do {
+        const query = `'${folderId}' in parents and trashed = false`;
+        const params = new URLSearchParams({
+          q: query,
+          fields: 'nextPageToken, files(id, name, mimeType, size, webViewLink, webContentLink, iconLink, createdTime, modifiedTime)',
+          orderBy: 'modifiedTime desc',
+          pageSize: '100',
+        });
+        if (nextPageToken) {
+          params.append('pageToken', nextPageToken);
+        }
+
+        const res = await fetch(`${DRIVE_API_URL}/files?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+
+        if (res.status === 401) {
+          invalidateGoogleAuth();
+          return [];
+        }
+
+        if (!res.ok) break;
+        const data = await res.json();
+        const filesPage = (data.files || []).map((file: any) => ({
+          ...file,
+          isFolder: file.mimeType === 'application/vnd.google-apps.folder',
+          size: file.size ? formatBytes(parseInt(file.size, 10)) : '-',
+        }));
+        folderFiles = [...folderFiles, ...filesPage];
+        nextPageToken = data.nextPageToken || null;
+      } while (nextPageToken);
+
+      return folderFiles;
+    };
+
+    const rootChildren = await fetchFolderChildren(archiveFolderId);
+    let allFiles: GoogleDriveFile[] = [...rootChildren];
+
+    // If there are subfolders inside 07_ARSIP_DOKUMEN_SURAT, scan them as well
+    const subfolders = rootChildren.filter((f) => f.isFolder);
+    if (subfolders.length > 0) {
+      const subResults = await Promise.all(subfolders.map((sf) => fetchFolderChildren(sf.id)));
+      for (const subList of subResults) {
+        allFiles = [...allFiles, ...subList];
       }
+    }
 
-      const res = await fetch(`${DRIVE_API_URL}/files?${params.toString()}`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-
-      if (res.status === 401) {
-        invalidateGoogleAuth();
-        return [];
-      }
-
-      if (!res.ok) break;
-      const data = await res.json();
-      const filesPage = (data.files || []).map((file: any) => ({
-        ...file,
-        isFolder: file.mimeType === 'application/vnd.google-apps.folder',
-        size: file.size ? formatBytes(parseInt(file.size, 10)) : '-',
-      }));
-      allFiles = [...allFiles, ...filesPage];
-      nextPageToken = data.nextPageToken || null;
-    } while (nextPageToken);
+    // Sort strictly by modifiedTime / createdTime descending (newest first)
+    allFiles.sort((a, b) => {
+      const timeA = new Date(a.modifiedTime || a.createdTime || 0).getTime();
+      const timeB = new Date(b.modifiedTime || b.createdTime || 0).getTime();
+      return timeB - timeA;
+    });
 
     return allFiles;
   } catch (error: any) {
@@ -1841,52 +1865,64 @@ export const fetchGuruBerkasFiles = async (
 
 /**
  * Save & sync Data Guru & PTK into Google Drive folder TATA USAHA/04_KEPEGAWAIAN_PTK
- * with exact file name "Data Guru & PTK" (both Google Sheets preserving templates & JSON)
+ * with exact file name "Data Guru & PTK" (Google Sheets preserving templates)
  */
 export const saveGuruPTKDataToDrive = async (
   accessToken: string,
   guruList: GuruPTK[]
-): Promise<{ success: boolean; fileId: string; fileName: string; folderId: string; lastUpdated: string }> => {
+): Promise<{
+  success: boolean;
+  fileId: string;
+  fileName: string;
+  webViewLink: string;
+  sheetName: string;
+  folderId: string;
+  lastUpdated: string;
+}> => {
   if (!accessToken) {
     throw new Error('AUTH_EXPIRED: Token Google Drive kosong.');
   }
 
   const nowFormatted = new Date().toISOString();
 
-  // Find or create the agenda spreadsheet
-  const { spreadsheetId, folderId } = await findOrCreateGuruPTKAgendaSheet(accessToken, guruList);
-  
-  // Write the data to the sheet
-  await writeGuruPTKToSheet(accessToken, spreadsheetId, guruList, "DATA PTK");
-  
-  return { 
-    success: true, 
-    fileId: spreadsheetId, 
-    fileName: "DATA_GURU_PTK", 
-    folderId, 
-    lastUpdated: nowFormatted 
+  // Find or create the "Data Guru & PTK" spreadsheet
+  const { spreadsheetId, webViewLink, folderId, fileName, sheetName } =
+    await findOrCreateGuruPTKAgendaSheet(accessToken, guruList);
+
+  // Write the data to the resolved sheet tab
+  await writeGuruPTKToSheet(accessToken, spreadsheetId, guruList, sheetName || 'DATA PTK');
+
+  return {
+    success: true,
+    fileId: spreadsheetId,
+    fileName: fileName || 'Data Guru & PTK',
+    webViewLink: webViewLink || `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
+    sheetName: sheetName || 'DATA PTK',
+    folderId,
+    lastUpdated: nowFormatted,
   };
 };
 
 /**
  * Load Data Guru & PTK from Google Drive folder TATA USAHA/04_KEPEGAWAIAN_PTK
- * Searches for "Data Guru & PTK" (JSON or Google Sheets / CSV)
+ * Searches for Google Sheet "Data Guru & PTK" (or legacy "DATA_GURU_PTK")
  */
 export const loadGuruPTKDataFromDrive = async (
   accessToken: string
-): Promise<{ success: boolean; data: GuruPTK[]; sourceName: string; sourceFolder: string }> => {
+): Promise<{ success: boolean; data: GuruPTK[]; sourceName: string; sourceFolder: string; webViewLink?: string }> => {
   if (!accessToken) {
     throw new Error('AUTH_EXPIRED: Token Google Drive kosong.');
   }
 
   const ptkFolderId = await findOrCreatePTKFolder(accessToken);
+  const nameFilter = "(name = 'Data Guru & PTK' or name = 'DATA GURU & PTK' or name = 'DATA_GURU_PTK')";
 
   // 1. Search inside 04_KEPEGAWAIAN_PTK folder first
-  const queryInFolder = `'${ptkFolderId}' in parents and trashed = false and mimeType = 'application/vnd.google-apps.spreadsheet' and name = 'DATA_GURU_PTK'`;
+  const queryInFolder = `'${ptkFolderId}' in parents and trashed = false and mimeType = 'application/vnd.google-apps.spreadsheet' and ${nameFilter}`;
   const resInFolder = await fetch(
     `${DRIVE_API_URL}/files?${new URLSearchParams({
       q: queryInFolder,
-      fields: 'files(id, name, mimeType, webViewLink)',
+      fields: 'files(id, name, mimeType, webViewLink, modifiedTime)',
       orderBy: 'modifiedTime desc',
       pageSize: '20',
     }).toString()}`,
@@ -1905,13 +1941,13 @@ export const loadGuruPTKDataFromDrive = async (
 
   // 2. If nothing found in folder, search globally in Drive
   if (candidateFiles.length === 0) {
-    const queryGlobal = `trashed = false and mimeType = 'application/vnd.google-apps.spreadsheet' and name = 'DATA_GURU_PTK'`;
+    const queryGlobal = `trashed = false and mimeType = 'application/vnd.google-apps.spreadsheet' and ${nameFilter}`;
     const resGlobal = await fetch(
       `${DRIVE_API_URL}/files?${new URLSearchParams({
         q: queryGlobal,
-        fields: 'files(id, name, mimeType, webViewLink)',
+        fields: 'files(id, name, mimeType, webViewLink, modifiedTime)',
         orderBy: 'modifiedTime desc',
-        pageSize: '10',
+        pageSize: '15',
       }).toString()}`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
@@ -1920,15 +1956,16 @@ export const loadGuruPTKDataFromDrive = async (
     }
   }
 
-  // Prioritize exact match "DATA_GURU_PTK"
+  // Prioritize exact match "Data Guru & PTK", then newest modifiedTime
   candidateFiles.sort((a, b) => {
-    const aExact = a.name === 'DATA_GURU_PTK' ? 1 : 0;
-    const bExact = b.name === 'DATA_GURU_PTK' ? 1 : 0;
-    return bExact - aExact;
+    const score = (n: string) =>
+      n === 'Data Guru & PTK' ? 3 : n.toLowerCase() === 'data guru & ptk' ? 2 : 1;
+    const diff = score(b.name || '') - score(a.name || '');
+    if (diff !== 0) return diff;
+    return new Date(b.modifiedTime || 0).getTime() - new Date(a.modifiedTime || 0).getTime();
   });
 
   for (const file of candidateFiles) {
-    // B. If it's a Google Spreadsheet
     if (file.mimeType === 'application/vnd.google-apps.spreadsheet') {
       try {
         const sheetMetaRes = await fetch(
@@ -1938,16 +1975,17 @@ export const loadGuruPTKDataFromDrive = async (
         if (sheetMetaRes.ok) {
           const metaData = await sheetMetaRes.json();
           const sheets = (metaData.sheets || []).map((s: any) => s.properties?.title || '');
-          const targetSheet = sheets.find((t: string) => {
-            const tl = t.toLowerCase();
-            return (
-              tl.includes('ptk') ||
-              tl.includes('guru') ||
-              tl.includes('data guru') ||
-              tl.includes('kepegawaian') ||
-              tl.includes('pendidik')
-            );
-          }) || sheets[0];
+          const targetSheet =
+            sheets.find((t: string) => {
+              const tl = t.toLowerCase();
+              return (
+                tl.includes('ptk') ||
+                tl.includes('guru') ||
+                tl.includes('data guru') ||
+                tl.includes('kepegawaian') ||
+                tl.includes('pendidik')
+              );
+            }) || sheets[0];
 
           if (targetSheet) {
             const valuesRes = await fetch(
@@ -1958,7 +1996,6 @@ export const loadGuruPTKDataFromDrive = async (
               const valData = await valuesRes.json();
               const rows: string[][] = valData.values || [];
               if (rows.length >= 2) {
-                // Dynamic row parsing
                 const headerKeywords = ['nama', 'nip', 'nuptk', 'jabatan', 'golongan', 'pangkat', 'jenis'];
                 let headerRowIndex = 0;
                 let maxScore = 0;
@@ -1983,10 +2020,15 @@ export const loadGuruPTKDataFromDrive = async (
                 const colNama = findColIndex(['nama lengkap', 'nama guru', 'nama']);
                 const colNip = findColIndex(['nip', 'n.i.p']);
                 const colNuptk = findColIndex(['nuptk', 'n.u.p.t.k']);
+                const colJk = findColIndex(['jenis kelamin', 'jk', 'l/p']);
+                const colTempat = findColIndex(['tempat lahir']);
+                const colTanggal = findColIndex(['tanggal lahir', 'tgl lahir']);
                 const colJabatan = findColIndex(['jabatan', 'tugas']);
-                const colJenisPTK = findColIndex(['jenis ptk', 'jenis']);
-                const colStatus = findColIndex(['status kepegawaian', 'status']);
+                const colJenisPTK = findColIndex(['jenis ptk', 'jenis tenaga', 'jenis']);
+                const colStatus = findColIndex(['status kepegawaian', 'status pegawai', 'status ptk']);
                 const colGol = findColIndex(['golongan', 'pangkat', 'gol']);
+                const colMapel = findColIndex(['mapel', 'mata pelajaran']);
+                const colTmt = findColIndex(['tmt']);
                 const colPendidikan = findColIndex(['pendidikan', 'ijazah']);
                 const colJurusan = findColIndex(['jurusan', 'prodi']);
                 const colSertifikasi = findColIndex(['sertifikasi']);
@@ -2007,10 +2049,15 @@ export const loadGuruPTKDataFromDrive = async (
                     namaLengkap: rawNama || 'Guru / PTK',
                     nip: rawNip || '-',
                     nuptk: rawNuptk || '-',
+                    jenisKelamin: (getV(colJk) as any) || undefined,
+                    tempatLahir: getV(colTempat) || undefined,
+                    tanggalLahir: getV(colTanggal) || undefined,
                     jabatan: getV(colJabatan) || 'Guru Mata Pelajaran',
                     jenisPTK: getV(colJenisPTK) || 'Guru Mapel',
                     statusKepegawaian: getV(colStatus) || 'PNS',
                     golongan: getV(colGol) || '-',
+                    mapelUtama: getV(colMapel) || undefined,
+                    tmtPengangkatan: getV(colTmt) || undefined,
                     pendidikanTerakhir: getV(colPendidikan) || 'S1',
                     jurusan: getV(colJurusan) || 'Pendidikan',
                     statusSertifikasi: getV(colSertifikasi).toLowerCase().includes('sudah') ? 'Sudah Sertifikasi' : 'Belum Sertifikasi',
@@ -2026,6 +2073,7 @@ export const loadGuruPTKDataFromDrive = async (
                     data: parsedList,
                     sourceName: `${file.name} (${targetSheet})`,
                     sourceFolder: 'TATA USAHA/04_KEPEGAWAIAN_PTK',
+                    webViewLink: file.webViewLink,
                   };
                 }
               }
@@ -2294,7 +2342,7 @@ export const saveSuratTugasDataToDrive = async (
     // Check if file exists
     const checkQuery = `name = '${fileName}' and '${archiveFolderId}' in parents and trashed = false`;
     const checkRes = await fetch(
-      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: checkQuery, fields: 'files(id)' }).toString()}`,
+      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: checkQuery, fields: 'files(id, modifiedTime)', orderBy: 'modifiedTime desc' }).toString()}`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
 
@@ -2326,7 +2374,7 @@ export const loadSuratTugasDataFromDrive = async (
     const fileName = 'REKAP_SURAT_TUGAS_DINAS.json';
     const checkQuery = `name = '${fileName}' and '${archiveFolderId}' in parents and trashed = false`;
     const checkRes = await fetch(
-      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: checkQuery, fields: 'files(id)' }).toString()}`,
+      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: checkQuery, fields: 'files(id, modifiedTime)', orderBy: 'modifiedTime desc' }).toString()}`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
 
@@ -2365,7 +2413,7 @@ export const savePembuatSuratDataToDrive = async (
     // Check if file exists
     const checkQuery = `name = '${fileName}' and '${archiveFolderId}' in parents and trashed = false`;
     const checkRes = await fetch(
-      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: checkQuery, fields: 'files(id)' }).toString()}`,
+      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: checkQuery, fields: 'files(id, modifiedTime)', orderBy: 'modifiedTime desc' }).toString()}`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
 
@@ -2397,7 +2445,7 @@ export const loadPembuatSuratDataFromDrive = async (
     const fileName = 'REKAP_PEMBUAT_SURAT.json';
     const checkQuery = `name = '${fileName}' and '${archiveFolderId}' in parents and trashed = false`;
     const checkRes = await fetch(
-      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: checkQuery, fields: 'files(id)' }).toString()}`,
+      `${DRIVE_API_URL}/files?${new URLSearchParams({ q: checkQuery, fields: 'files(id, modifiedTime)', orderBy: 'modifiedTime desc' }).toString()}`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
 

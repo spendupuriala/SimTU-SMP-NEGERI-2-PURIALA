@@ -221,78 +221,105 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
     try {
       // 1. Fetch physical files in folder TATA USAHA/07_ARSIP_DOKUMEN_SURAT
       const files = await fetchArsipDokumenFiles(googleToken);
-      const docFiles = files.filter((f) => {
+      const rawDocFiles = files.filter((f) => {
         if (f.isFolder) return false;
-        
+
         const upperName = f.name.toUpperCase();
-        if (
-          upperName === 'REKAP_PEMBUAT_SURAT.JSON' ||
-          upperName === 'REKAP_SURAT_TUGAS_DINAS.JSON'
-        ) {
+        if (upperName.endsWith('.JSON')) {
           return false;
         }
 
-        const isDoc = upperName.endsWith('.PDF') || upperName.endsWith('.DOCX') || upperName.endsWith('.DOC');
+        const isDoc =
+          upperName.endsWith('.PDF') ||
+          upperName.endsWith('.DOCX') ||
+          upperName.endsWith('.DOC') ||
+          upperName.endsWith('.HTML') ||
+          upperName.endsWith('.HTM') ||
+          f.mimeType === 'application/vnd.google-apps.document';
         if (!isDoc) return false;
 
         // BUKAN berkas SPT/SPPD
-        const isSptOrSppd = 
+        const isSptOrSppd =
           upperName.startsWith('SPT_') ||
           upperName.startsWith('SPPD_') ||
           upperName.includes('SPT_') ||
           upperName.includes('SPPD_') ||
           upperName.includes('SURAT_TUGAS') ||
+          upperName.includes('SURAT_PERINTAH_TUGAS') ||
+          upperName.includes('SURAT_PERJALANAN_DINAS') ||
           upperName.includes('SPT ') ||
           upperName.includes('SPPD ') ||
           upperName.includes('SPT-') ||
           upperName.includes('SPPD-') ||
           upperName.includes('SURAT TUGAS') ||
-          upperName.includes('SURAT-TUGAS');
-          
-        if (isSptOrSppd) return false;
+          upperName.includes('SURAT-TUGAS') ||
+          /^09[04][_\-\s]/.test(upperName);
 
-        // DUKUNG SEMUA FORMAT NAMA FILE PDF/Docs yang tersimpan (misal file yang menggunakan spasi, garis bawah "_", atau strip "-").
-        const normalizedForCheck = upperName.replace(/[\s\-]+/g, '_');
-
-        const isGeneralLetter = 
-          normalizedForCheck.includes('SURAT_KETERANGAN') ||
-          normalizedForCheck.includes('SURAT_REKOMENDASI') ||
-          normalizedForCheck.includes('SURAT_PINDAH') ||
-          normalizedForCheck.includes('SURAT_PERNYATAAN') ||
-          normalizedForCheck.includes('SURAT_KELAKUAN') ||
-          normalizedForCheck.includes('SURAT_CUTI') ||
-          normalizedForCheck.includes('SURAT_IJAZAH') ||
-          normalizedForCheck.startsWith('SURAT_') ||
-          normalizedForCheck.includes('SURAT');
-
-        // Terima berkas dokumen surat keterangan/umum apa pun di folder ini yang bukan merupakan berkas SPT/SPPD
-        return isGeneralLetter || true;
+        return !isSptOrSppd;
       });
 
-      // 2. Load rekap JSON data
+      // Sort strictly newest-first by modifiedTime / createdTime
+      rawDocFiles.sort((a, b) => {
+        const timeA = new Date(a.modifiedTime || a.createdTime || 0).getTime();
+        const timeB = new Date(b.modifiedTime || b.createdTime || 0).getTime();
+        return timeB - timeA;
+      });
+
+      // Deduplicate by normalized file name: always keep newest copy
+      const newestByName = new Map<string, (typeof rawDocFiles)[number]>();
+      for (const f of rawDocFiles) {
+        const key = f.name
+          .trim()
+          .toLowerCase()
+          .replace(/\s*\(\d+\)(?=\.[^.]+$|$)/, '')
+          .replace(/\s+/g, ' ');
+        if (!newestByName.has(key)) {
+          newestByName.set(key, f);
+        }
+      }
+      const docFiles = Array.from(newestByName.values());
+
+      // 2. Load rekap JSON data & merge with unsynced local records
       const driveRekap = await loadPembuatSuratDataFromDrive(googleToken);
-      let baseList = driveRekap && Array.isArray(driveRekap) ? [...driveRekap] : [...(suratList || [])];
+      let baseList: PembuatSuratRecord[] = [];
+      if (driveRekap && Array.isArray(driveRekap)) {
+        baseList = [...driveRekap];
+        const rekapIds = new Set(driveRekap.map((r: PembuatSuratRecord) => r.id));
+        const rekapNoSet = new Set(
+          driveRekap
+            .map((r: PembuatSuratRecord) => (r.noSurat || '').trim().toLowerCase())
+            .filter(Boolean)
+        );
+        for (const localItem of suratList || []) {
+          const lowNo = (localItem.noSurat || '').trim().toLowerCase();
+          if (!rekapIds.has(localItem.id) && !(lowNo && rekapNoSet.has(lowNo))) {
+            baseList.push(localItem);
+          }
+        }
+      } else {
+        baseList = [...(suratList || [])];
+      }
+
       let updatedCount = 0;
       let newlyCreatedCount = 0;
 
       // Track matched file IDs to prevent duplicate record generation
       const matchedFileIds = new Set<string>();
 
-      // 3. Match existing entries with physical files
-      let updatedList = baseList.map((surat) => {
+      // 3. Match existing entries with physical files (preferring name/noSurat match so newest file wins)
+      const updatedList: PembuatSuratRecord[] = baseList.map((surat): PembuatSuratRecord => {
         const safeNo = (surat.noSurat || '').replace(/[/\\?%*:|"<>]/g, '_');
         const cleanJenis = (surat.jenisSuratNama || '').replace(/[^a-zA-Z0-9]/g, '_');
         const cleanName = (surat.subjekData?.nama || 'Dokumen').replace(/[^a-zA-Z0-9]/g, '_');
 
-        // Match by exact file ID, or by constructed name, or if name contains safeNo or subjek name
-        const matchedFile = docFiles.find(
-          (f) =>
-            f.id === surat.driveFileId ||
-            f.name.toLowerCase() === `${cleanJenis}_${cleanName}_SMPN2_PURIALA.pdf`.toLowerCase() ||
-            f.name.toLowerCase() === `SURAT_${safeNo}_${cleanName}.pdf`.toLowerCase() ||
-            (safeNo && f.name.replace(/\.[^/.]+$/, "").toLowerCase().includes(safeNo.toLowerCase())) ||
-            (cleanName && f.name.replace(/\.[^/.]+$/, "").toLowerCase().includes(cleanName.toLowerCase()))
-        );
+        const matchedFile =
+          docFiles.find(
+            (f) =>
+              f.name.toLowerCase() === `${cleanJenis}_${cleanName}_SMPN2_PURIALA.pdf`.toLowerCase() ||
+              f.name.toLowerCase() === `SURAT_${safeNo}_${cleanName}.pdf`.toLowerCase() ||
+              (safeNo && f.name.replace(/\.[^/.]+$/, '').toLowerCase().includes(safeNo.toLowerCase())) ||
+              (cleanName && cleanName !== 'Dokumen' && f.name.replace(/\.[^/.]+$/, '').toLowerCase().includes(cleanName.toLowerCase()))
+          ) || docFiles.find((f) => f.id === surat.driveFileId);
 
         if (matchedFile) {
           matchedFileIds.add(matchedFile.id);
@@ -302,24 +329,32 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
             statusDrive: 'Tersimpan' as const,
             driveFileId: matchedFile.id,
             driveWebViewLink: matchedFile.webViewLink,
-            drivePath: 'TATA USAHA/07_ARSIP_DOKUMEN_SURAT',
           };
         } else {
           return {
             ...surat,
-            statusDrive: surat.statusDrive === 'Tersimpan' ? 'Lokal Saja' as const : surat.statusDrive,
+            statusDrive: surat.statusDrive === 'Tersimpan' ? ('Lokal Saja' as const) : surat.statusDrive,
           };
         }
       });
 
-      // 4. For any physical document file NOT matched, parse and create new record (Langkah C)
+      // 4. For any physical document file NOT matched, parse and create new record
       for (const f of docFiles) {
         if (matchedFileIds.has(f.id)) continue;
 
-        const parsed = parsePembuatSuratFileName(f.name, f.createdTime);
+        const fileTimestamp = f.modifiedTime || f.createdTime;
+        const parsed = parsePembuatSuratFileName(f.name, fileTimestamp);
+        const fileDate = fileTimestamp
+          ? fileTimestamp.split('T')[0]
+          : new Date().toISOString().split('T')[0];
 
-        // Check if we already have this file based strictly on Google Drive File ID to prevent duplicates
-        const exists = updatedList.some((item) => item.driveFileId === f.id);
+        const exists = updatedList.some(
+          (item) =>
+            item.driveFileId === f.id ||
+            (parsed.noSurat &&
+              item.noSurat &&
+              item.noSurat.trim().toLowerCase() === parsed.noSurat.trim().toLowerCase())
+        );
 
         if (!exists) {
           const newRecord: PembuatSuratRecord = {
@@ -329,7 +364,7 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
             targetSubjek: parsed.targetSubjek,
             jenisSuratId: 'drive-import',
             jenisSuratNama: parsed.jenisSuratNama,
-            tanggalSurat: f.createdTime ? f.createdTime.split('T')[0] : new Date().toISOString().split('T')[0],
+            tanggalSurat: fileDate,
             tempatTerbit: 'Unggulino',
             perihal: parsed.jenisSuratNama,
             subjekData: {
@@ -352,15 +387,15 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
             statusDrive: 'Tersimpan',
             driveFileId: f.id,
             driveWebViewLink: f.webViewLink,
-            createdAt: f.createdTime || new Date().toISOString(),
-            updatedAt: f.createdTime || new Date().toISOString(),
+            createdAt: fileTimestamp || new Date().toISOString(),
+            updatedAt: fileTimestamp || new Date().toISOString(),
           };
           updatedList.push(newRecord);
           newlyCreatedCount++;
         }
       }
 
-      // 5. READ-ONLY rule: Update local application state ONLY.
+      // 5. READ-ONLY rule: Update local application state ONLY & sync to Menu Surat Keluar via App onBatchUpdate.
       if (onBatchUpdate) {
         onBatchUpdate(updatedList);
       }
@@ -1182,14 +1217,19 @@ export const PembuatSuratModule: React.FC<PembuatSuratModuleProps> = ({
 
       const uploaded = await uploadDocumentAsPdfToDrive(googleToken, pdfBlob, fileName);
 
-      onUpdate({
+      const updatedRecord: PembuatSuratRecord = {
         ...surat,
+        status: surat.status || 'Terbit',
         statusDrive: 'Tersimpan',
         driveFileId: uploaded.id,
         driveWebViewLink: uploaded.webViewLink,
-      });
+      };
 
-      showToast(`Berhasil menyimpan berkas "${fileName}" ke Google Drive (TATA USAHA/07_ARSIP_DOKUMEN_SURAT).`);
+      onUpdate(updatedRecord);
+      setSelectedSuratForPreview(updatedRecord);
+      setEditingSuratId(updatedRecord.id);
+
+      showToast(`Berhasil menyimpan berkas "${fileName}" ke Google Drive & Menu Surat Keluar.`);
     } catch (err: any) {
       showToast(`Gagal mengunggah ke Google Drive: ${err.message || err}`);
     } finally {

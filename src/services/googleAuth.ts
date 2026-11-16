@@ -1,5 +1,4 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, setLogLevel } from 'firebase/firestore';
 import {
   getAuth,
   signInWithPopup,
@@ -10,18 +9,9 @@ import {
 } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-// Silence verbose connection failure logs when offline or restricted
-setLogLevel('error');
-
-// Initialize Firebase App singleton safely
+// Initialize Firebase App singleton safely (Auth only; app data persists via Drive/Sheets & localStorage)
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
-export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({
-    tabManager: persistentMultipleTabManager(),
-  }),
-  experimentalForceLongPolling: true,
-});
 
 // Configure Google Auth Provider with Drive & Sheets scopes
 export const GOOGLE_DRIVE_SCOPES = [

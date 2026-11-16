@@ -57,6 +57,9 @@ interface GuruPTKModuleProps {
   isGoogleLoading?: boolean;
   onConnectGoogle?: () => void;
   onBatchUpdate?: (newList: GuruPTK[]) => void;
+  guruSheetSyncStatus?: 'idle' | 'syncing' | 'synced' | 'error';
+  guruSheetInfo?: { fileName: string; webViewLink?: string; lastUpdated?: string } | null;
+  onSheetSynced?: (info: { fileName: string; webViewLink?: string; lastUpdated?: string }) => void;
 }
 
 const KATEGORI_BERKAS_OPTIONS = [
@@ -85,6 +88,9 @@ export const GuruPTKModule: React.FC<GuruPTKModuleProps> = ({
   isGoogleLoading,
   onConnectGoogle,
   onBatchUpdate,
+  guruSheetSyncStatus,
+  guruSheetInfo,
+  onSheetSynced,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('Semua');
@@ -95,15 +101,25 @@ export const GuruPTKModule: React.FC<GuruPTKModuleProps> = ({
   const [selectedGuruBerkas, setSelectedGuruBerkas] = useState<GuruPTK | null>(null);
   const [guruToDelete, setGuruToDelete] = useState<GuruPTK | null>(null);
 
-  // Google Drive PTK Sync States
+  // Google Drive & Sheets PTK Sync States
   const [isSyncingDrive, setIsSyncingDrive] = useState(false);
+  const [isSendingToSheet, setIsSendingToSheet] = useState(false);
   const [isPullingDrive, setIsPullingDrive] = useState(false);
   const [isScanningDriveBerkas, setIsScanningDriveBerkas] = useState(false);
   const [isPrintListModalOpen, setIsPrintListModalOpen] = useState(false);
   const [printCategoryOption, setPrintCategoryOption] = useState('Semua');
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+  const [sheetWebViewLink, setSheetWebViewLink] = useState<string | null>(
+    guruSheetInfo?.webViewLink || null
+  );
   const [syncFeedback, setSyncFeedback] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
   const hasAutoScannedRef = useRef(false);
+
+  useEffect(() => {
+    if (guruSheetInfo?.webViewLink) {
+      setSheetWebViewLink(guruSheetInfo.webViewLink);
+    }
+  }, [guruSheetInfo]);
 
   // Auto-scan Google Drive Folder TATA USAHA/04_KEPEGAWAIAN_PTK for teachers' digital files
   const handleAutoScanBerkas = async (silent = false) => {
@@ -269,6 +285,43 @@ export const GuruPTKModule: React.FC<GuruPTKModuleProps> = ({
   };
 
   // -------------------------------------------------------------
+  // GOOGLE SHEET SYNC: KIRIM DATA KE SHEET "Data Guru & PTK"
+  // -------------------------------------------------------------
+  const handleSendToSheet = async () => {
+    if (!googleToken || !isGoogleConnected) {
+      showNotification('Menghubungkan akun Google untuk mengirim data ke Sheet "Data Guru & PTK"...', 'info');
+      if (onConnectGoogle) onConnectGoogle();
+      return;
+    }
+
+    try {
+      setIsSendingToSheet(true);
+      const res = await saveGuruPTKDataToDrive(googleToken, guruList);
+      const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+      setLastSyncTime(timeStr);
+      if (res.webViewLink) {
+        setSheetWebViewLink(res.webViewLink);
+      }
+      if (onSheetSynced) {
+        onSheetSynced({
+          fileName: res.fileName,
+          webViewLink: res.webViewLink,
+          lastUpdated: res.lastUpdated,
+        });
+      }
+      showNotification(
+        `Berhasil mengirim ${guruList.length} data ke Google Sheet "${res.fileName}" (Tab: ${res.sheetName})!`,
+        'success'
+      );
+    } catch (error: any) {
+      console.error('Error sending PTK to Google Sheet:', error);
+      showNotification(error?.message || 'Gagal mengirim Data Guru & PTK ke Google Sheet.', 'error');
+    } finally {
+      setIsSendingToSheet(false);
+    }
+  };
+
+  // -------------------------------------------------------------
   // GOOGLE DRIVE SYNC: PUSH (Simpan Data ke Drive)
   // -------------------------------------------------------------
   const handleSaveToDrive = async () => {
@@ -282,8 +335,18 @@ export const GuruPTKModule: React.FC<GuruPTKModuleProps> = ({
       const res = await saveGuruPTKDataToDrive(googleToken, guruList);
       const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
       setLastSyncTime(timeStr);
+      if (res.webViewLink) {
+        setSheetWebViewLink(res.webViewLink);
+      }
+      if (onSheetSynced) {
+        onSheetSynced({
+          fileName: res.fileName,
+          webViewLink: res.webViewLink,
+          lastUpdated: res.lastUpdated,
+        });
+      }
       showNotification(
-        `Berhasil menyimpan ${guruList.length} data Guru & PTK ke Google Drive: Folder TATA USAHA/04_KEPEGAWAIAN_PTK (File: ${res.fileName})!`,
+        `Berhasil menyimpan ${guruList.length} data Guru & PTK ke Folder TATA USAHA/04_KEPEGAWAIAN_PTK (File Sheet: "${res.fileName}")!`,
         'success'
       );
     } catch (error: any) {
@@ -306,6 +369,9 @@ export const GuruPTKModule: React.FC<GuruPTKModuleProps> = ({
     try {
       setIsPullingDrive(true);
       const res = await loadGuruPTKDataFromDrive(googleToken);
+      if (res.webViewLink) {
+        setSheetWebViewLink(res.webViewLink);
+      }
       if (res.data && res.data.length > 0) {
         if (onBatchUpdate) {
           onBatchUpdate(res.data);
@@ -313,7 +379,7 @@ export const GuruPTKModule: React.FC<GuruPTKModuleProps> = ({
         const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
         setLastSyncTime(timeStr);
         showNotification(
-          `Berhasil menarik data Guru & PTK dari Google Sheets!`,
+          `Berhasil menarik ${res.data.length} data Guru & PTK dari Google Sheet "${res.sourceName}"!`,
           'success'
         );
       } else {
@@ -681,7 +747,7 @@ export const GuruPTKModule: React.FC<GuruPTKModuleProps> = ({
         </div>
       </div>
 
-      {/* GOOGLE DRIVE INTEGRATION ACTION BAR */}
+      {/* GOOGLE DRIVE & SHEET INTEGRATION ACTION BAR */}
       <div className="bg-gradient-to-r from-teal-900 via-teal-800 to-slate-900 text-white rounded-2xl p-4 shadow-md border border-teal-700/50 flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div className="flex items-start sm:items-center gap-3">
           <div className="p-2.5 bg-white/10 rounded-xl border border-white/20 backdrop-blur-xs shrink-0">
@@ -690,17 +756,19 @@ export const GuruPTKModule: React.FC<GuruPTKModuleProps> = ({
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-extrabold tracking-wide uppercase text-teal-200">
-                Google Drive Storage Sync
+                Google Drive &amp; Sheet Sync
               </span>
               <span className="bg-teal-500/30 text-teal-200 text-[10px] font-mono px-2 py-0.5 rounded-full border border-teal-400/30">
                 Folder: TATA USAHA/04_KEPEGAWAIAN_PTK
               </span>
               <span className="bg-white/10 text-white text-[10px] font-mono px-2 py-0.5 rounded-full">
-                File: "Data Guru & PTK"
+                File Sheet: "Data Guru &amp; PTK"
               </span>
             </div>
             <p className="text-xs text-slate-300 mt-0.5">
-              Otomatis membaca subfolder nama guru &amp; menghitung berkas digital di folder TATA USAHA/04_KEPEGAWAIAN_PTK.
+              Setiap penambahan, perubahan, atau penghapusan data Guru &amp; PTK otomatis tercatat ke Google Sheet <strong>"Data Guru &amp; PTK"</strong>.
+              {guruSheetSyncStatus === 'syncing' && ' Menyimpan pembaruan ke Sheet...'}
+              {guruSheetSyncStatus === 'synced' && lastSyncTime ? ` Terakhir tersinkron pukul ${lastSyncTime}.` : ''}
             </p>
           </div>
         </div>
@@ -712,7 +780,7 @@ export const GuruPTKModule: React.FC<GuruPTKModuleProps> = ({
               <button
                 type="button"
                 onClick={() => handleAutoScanBerkas(false)}
-                disabled={isScanningDriveBerkas || isPullingDrive || isSyncingDrive}
+                disabled={isScanningDriveBerkas || isPullingDrive || isSyncingDrive || isSendingToSheet}
                 className="bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold py-2 px-3 rounded-xl shadow-md transition flex items-center gap-1.5 disabled:opacity-50"
                 title="Pindai subfolder nama guru di folder 04_KEPEGAWAIAN_PTK untuk sinkronisasi jumlah berkas digital"
               >
@@ -723,35 +791,73 @@ export const GuruPTKModule: React.FC<GuruPTKModuleProps> = ({
               <button
                 type="button"
                 onClick={handlePullFromDrive}
-                disabled={isPullingDrive || isSyncingDrive || isScanningDriveBerkas}
+                disabled={isPullingDrive || isSyncingDrive || isSendingToSheet || isScanningDriveBerkas}
                 className="bg-teal-700/80 hover:bg-teal-600 text-white text-xs font-bold py-2 px-3 rounded-xl border border-teal-500/50 shadow-xs transition flex items-center gap-1.5 disabled:opacity-50"
-                title="Tarik data Guru & PTK dari file 'Data Guru & PTK' di folder 04_KEPEGAWAIAN_PTK"
+                title="Tarik data Guru & PTK dari file Sheet 'Data Guru & PTK' di folder 04_KEPEGAWAIAN_PTK"
               >
                 <CloudDownload className={`w-4 h-4 ${isPullingDrive ? 'animate-bounce' : ''}`} />
                 <span>{isPullingDrive ? 'Menarik...' : 'Tarik Data'}</span>
               </button>
 
+              {/* Kirim ke Sheet Button */}
+              <button
+                type="button"
+                onClick={handleSendToSheet}
+                disabled={isSendingToSheet || isSyncingDrive || isPullingDrive || isScanningDriveBerkas}
+                className="bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-extrabold py-2 px-3.5 rounded-xl shadow-md border border-cyan-400/40 transition flex items-center gap-1.5 disabled:opacity-50"
+                title="Kirim & simpan seluruh Data Guru & PTK langsung ke Google Sheet 'Data Guru & PTK'"
+              >
+                <FileSpreadsheet className={`w-4 h-4 ${isSendingToSheet ? 'animate-pulse' : ''}`} />
+                <span>{isSendingToSheet ? 'Mengirim ke Sheet...' : 'Kirim ke Sheet'}</span>
+              </button>
+
               <button
                 type="button"
                 onClick={handleSaveToDrive}
-                disabled={isSyncingDrive || isPullingDrive || isScanningDriveBerkas}
+                disabled={isSyncingDrive || isSendingToSheet || isPullingDrive || isScanningDriveBerkas}
                 className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2 px-3.5 rounded-xl shadow-md transition flex items-center gap-1.5 disabled:opacity-50"
                 title="Simpan data Guru & PTK ke Google Drive (TATA USAHA/04_KEPEGAWAIAN_PTK/Data Guru & PTK)"
               >
                 <CloudUpload className={`w-4 h-4 ${isSyncingDrive ? 'animate-spin' : ''}`} />
                 <span>{isSyncingDrive ? 'Menyimpan...' : 'Simpan ke Drive'}</span>
               </button>
+
+              {sheetWebViewLink && (
+                <a
+                  href={sheetWebViewLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="bg-white/10 hover:bg-white/20 text-white text-xs font-bold py-2 px-3 rounded-xl border border-white/20 transition flex items-center gap-1.5"
+                  title="Buka Google Sheet Data Guru & PTK"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-teal-200" />
+                  <span>Buka Sheet</span>
+                </a>
+              )}
             </>
           ) : (
-            <button
-              type="button"
-              onClick={onConnectGoogle}
-              disabled={isGoogleLoading}
-              className="bg-white hover:bg-slate-100 text-slate-900 text-xs font-bold py-2 px-4 rounded-xl shadow-md transition flex items-center gap-1.5"
-            >
-              <Cloud className="w-4 h-4 text-teal-600" />
-              <span>Hubungkan Akun Google</span>
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={handleSendToSheet}
+                disabled={isGoogleLoading}
+                className="bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-extrabold py-2 px-3.5 rounded-xl shadow-md border border-cyan-400/40 transition flex items-center gap-1.5 disabled:opacity-50"
+                title="Hubungkan akun Google lalu kirim Data Guru & PTK ke Sheet 'Data Guru & PTK'"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                <span>Kirim ke Sheet</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onConnectGoogle}
+                disabled={isGoogleLoading}
+                className="bg-white hover:bg-slate-100 text-slate-900 text-xs font-bold py-2 px-4 rounded-xl shadow-md transition flex items-center gap-1.5"
+              >
+                <Cloud className="w-4 h-4 text-teal-600" />
+                <span>Hubungkan Akun Google</span>
+              </button>
+            </>
           )}
         </div>
       </div>

@@ -137,16 +137,21 @@ export function convertPembuatSuratToSuratKeluar(
 
   let noAgenda = existingAgenda;
   if (!noAgenda) {
-    let maxNum = 0;
-    existingSuratKeluarList.forEach((sk) => {
-      const match = (sk.noAgenda || '').match(/^(\d+)/);
-      if (match) {
-        const n = parseInt(match[1], 10);
-        if (!isNaN(n) && n > maxNum) maxNum = n;
-      }
-    });
-    const nextNum = String(maxNum + 1).padStart(3, '0');
-    noAgenda = `${nextNum}/SK/2026`;
+    const extracted = extractNomorUrutFromNoSurat(surat.noSurat);
+    if (extracted !== null) {
+      noAgenda = generateAgendaFromNoSurat(surat.noSurat, 'SK');
+    } else {
+      let maxNum = 0;
+      existingSuratKeluarList.forEach((sk) => {
+        const match = (sk.noAgenda || '').match(/^(\d+)/);
+        if (match) {
+          const n = parseInt(match[1], 10);
+          if (!isNaN(n) && n > maxNum) maxNum = n;
+        }
+      });
+      const nextNum = String(maxNum + 1).padStart(3, '0');
+      noAgenda = `${nextNum}/SK/2026`;
+    }
   }
 
   const statusVerif: SuratKeluar['statusVerifikasi'] =
@@ -185,10 +190,25 @@ export function upsertSuratTugasInSuratKeluar(
   tugas: SuratTugasDinas,
   identitas: IdentitasSekolah
 ): SuratKeluar[] {
-  // Filter out any legacy entries for this reference ID to prevent duplicates
-  let result = currentSuratKeluar.filter(
-    (sk) => sk.referensiId !== tugas.id && sk.id !== `SK-ST-${tugas.id}` && sk.id !== `SK-ST-${tugas.id}-SPT` && sk.id !== `SK-ST-${tugas.id}-SPPD`
-  );
+  const normSpt = (tugas.noSuratTugas || '').trim().toLowerCase();
+  const normSppd = (tugas.noSPPD || '').trim().toLowerCase();
+
+  // Filter out any legacy entries or duplicate noSurat rows for this reference ID
+  const result = currentSuratKeluar.filter((sk) => {
+    if (
+      sk.referensiId === tugas.id ||
+      sk.id === `SK-ST-${tugas.id}` ||
+      sk.id === `SK-ST-${tugas.id}-SPT` ||
+      sk.id === `SK-ST-${tugas.id}-SPPD`
+    ) {
+      return false;
+    }
+    const skNo = (sk.noSurat || '').trim().toLowerCase();
+    if (skNo && ((normSpt && skNo === normSpt) || (normSppd && skNo === normSppd))) {
+      return false;
+    }
+    return true;
+  });
 
   // 1. Create SPT entry and push at the bottom of the array
   if (tugas.noSuratTugas) {
@@ -214,9 +234,17 @@ export function upsertPembuatSuratInSuratKeluar(
   surat: PembuatSuratRecord,
   identitas: IdentitasSekolah
 ): SuratKeluar[] {
-  let result = currentSuratKeluar.filter(
-    (sk) => sk.referensiId !== surat.id && sk.id !== `SK-PS-${surat.id}`
-  );
+  const normNo = (surat.noSurat || '').trim().toLowerCase();
+  const result = currentSuratKeluar.filter((sk) => {
+    if (sk.referensiId === surat.id || sk.id === `SK-PS-${surat.id}`) {
+      return false;
+    }
+    const skNo = (sk.noSurat || '').trim().toLowerCase();
+    if (skNo && normNo && skNo === normNo) {
+      return false;
+    }
+    return true;
+  });
   const created = convertPembuatSuratToSuratKeluar(surat, identitas, undefined, result);
   result.push(created);
   return result;
@@ -248,14 +276,31 @@ export function syncAllModulesToSuratKeluar(
   pembuatSuratList: PembuatSuratRecord[],
   identitas: IdentitasSekolah
 ): SuratKeluar[] {
-  // Filter out all auto-synced entries to avoid corruption or duplicate rows
-  let resultList = currentSuratKeluar.filter(
-    (sk) =>
-      sk.sumberModul !== 'surat-tugas' &&
-      sk.sumberModul !== 'pembuat-surat' &&
-      !sk.id.startsWith('SK-ST-') &&
-      !sk.id.startsWith('SK-PS-')
-  );
+  const moduleNoSuratSet = new Set<string>();
+  suratTugasList.forEach((st) => {
+    if (st.noSuratTugas) moduleNoSuratSet.add(st.noSuratTugas.trim().toLowerCase());
+    if (st.noSPPD) moduleNoSuratSet.add(st.noSPPD.trim().toLowerCase());
+  });
+  pembuatSuratList.forEach((ps) => {
+    if (ps.noSurat) moduleNoSuratSet.add(ps.noSurat.trim().toLowerCase());
+  });
+
+  // Filter out all auto-synced entries and any matching noSurat duplicates to avoid corruption
+  const resultList = currentSuratKeluar.filter((sk) => {
+    if (
+      sk.sumberModul === 'surat-tugas' ||
+      sk.sumberModul === 'pembuat-surat' ||
+      sk.id.startsWith('SK-ST-') ||
+      sk.id.startsWith('SK-PS-')
+    ) {
+      return false;
+    }
+    const skNo = (sk.noSurat || '').trim().toLowerCase();
+    if (skNo && moduleNoSuratSet.has(skNo)) {
+      return false;
+    }
+    return true;
+  });
 
   // 1. Rebuild and push Surat Tugas (separated into SPT and SPPD)
   suratTugasList.forEach((st) => {
