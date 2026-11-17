@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   PlaneTakeoff,
   Plus,
@@ -13,7 +14,6 @@ import {
   MapPin,
   Calendar,
   Building,
-  Download,
   Cloud,
   ExternalLink,
   RefreshCw,
@@ -22,7 +22,6 @@ import {
   Check,
   Sparkles,
   AlertCircle,
-  FileCode,
   FileSpreadsheet,
   Tag,
   BookOpen,
@@ -44,8 +43,6 @@ import {
 import { DEFAULT_KODE_KLASIFIKASI } from '../services/googleSheets';
 import {
   generateSuratTugasFullHtml,
-  downloadSuratTugasHtmlFile,
-  downloadSuratTugasDocFile,
   SPTPrintMode,
   formatTanggalIndonesia,
   LOGO_KABUPATEN_KONAWE_BASE64,
@@ -208,8 +205,64 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
 
   // Print & Preview State
   const [selectedForPrint, setSelectedForPrint] = useState<SuratTugasDinas | null>(null);
-  const [printMode, setPrintMode] = useState<SPTPrintMode>('spt_only');
-  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [printType, setPrintType] = useState<'SPT' | 'SPPD' | 'LENGKAP'>('SPT');
+  const [printFallbackUrl, setPrintFallbackUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      document.body.classList.remove('spt-printing');
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (printFallbackUrl) {
+        URL.revokeObjectURL(printFallbackUrl);
+      }
+    };
+  }, [printFallbackUrl]);
+
+  const handlePrintDocument = () => {
+    if (!selectedForPrint) return;
+    setPrintFallbackUrl(null);
+    document.body.classList.add('spt-printing');
+
+    let beforePrintFired = false;
+    const onBeforePrint = () => {
+      beforePrintFired = true;
+    };
+    const cleanup = () => {
+      document.body.classList.remove('spt-printing');
+      window.removeEventListener('beforeprint', onBeforePrint);
+      window.removeEventListener('afterprint', cleanup);
+    };
+
+    window.addEventListener('beforeprint', onBeforePrint, { once: true });
+    window.addEventListener('afterprint', cleanup, { once: true });
+
+    try {
+      window.focus();
+      window.print();
+    } catch (err) {
+      console.warn('window.print error:', err);
+    }
+
+    setTimeout(() => {
+      document.body.classList.remove('spt-printing');
+      window.removeEventListener('beforeprint', onBeforePrint);
+      if (!beforePrintFired) {
+        const modeForHtml: SPTPrintMode =
+          printType === 'SPT' ? 'spt_only' : printType === 'SPPD' ? 'sppd_only' : 'all';
+        const rawHtml = generateSuratTugasFullHtml(selectedForPrint, identitasSekolah, modeForHtml);
+        const autoPrintHtml = rawHtml.replace(
+          '</body>',
+          '<script>window.addEventListener("load",function(){setTimeout(function(){window.focus();window.print();},350);});</script></body>'
+        );
+        const blob = new Blob([autoPrintHtml], { type: 'text/html;charset=utf-8' });
+        setPrintFallbackUrl(URL.createObjectURL(blob));
+      }
+    }, 400);
+  };
 
   // Google Drive Template State
   const [isDriveTemplateModalOpen, setIsDriveTemplateModalOpen] = useState(false);
@@ -809,7 +862,9 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
     setIsSavingToDrive(true);
     setSaveSuccessMsg(null);
     try {
-      const htmlContent = generateSuratTugasFullHtml(tugas, identitasSekolah, printMode);
+      const modeForDrive: SPTPrintMode =
+        printType === 'SPT' ? 'spt_only' : printType === 'SPPD' ? 'sppd_only' : 'all';
+      const htmlContent = generateSuratTugasFullHtml(tugas, identitasSekolah, modeForDrive);
       const cleanNama = (tugas.personil[0]?.nama || 'Dinas')
         .replace(/[^a-zA-Z0-9\s]/g, '')
         .trim()
@@ -852,172 +907,6 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
     }
   };
 
-  const handleDownloadPdf = async (tugas: SuratTugasDinas, mode: SPTPrintMode) => {
-    setIsGeneratingPdf(true);
-    try {
-      const htmlContent = generateSuratTugasFullHtml(tugas, identitasSekolah, mode);
-      const cleanNama = (tugas.personil?.[0]?.nama || 'Dinas')
-        .replace(/[^a-zA-Z0-9\s]/g, '')
-        .trim()
-        .replace(/\s+/g, '_');
-      const safeNo = (tugas.noSuratTugas || tugas.noSPPD || 'Surat_Tugas')
-        .replace(/[/\\?%*:|"<>]/g, '_')
-        .trim()
-        .replace(/\s+/g, '_');
-      const suffix = mode === 'spt_only' ? 'SPT' : mode === 'sppd_only' ? 'SPPD' : 'SPT_SPPD';
-      const fileName = `${suffix}_${safeNo}_${cleanNama}.pdf`;
-
-      const parser = new DOMParser();
-      const parsedDoc = parser.parseFromString(htmlContent, 'text/html');
-      const rawCss = Array.from(parsedDoc.querySelectorAll('style'))
-        .map((s) => s.textContent || '')
-        .join('\n');
-
-      const tempContainer = document.createElement('div');
-      tempContainer.style.position = 'fixed';
-      tempContainer.style.left = '-99999px';
-      tempContainer.style.top = '0';
-      tempContainer.style.width = '210mm';
-      tempContainer.style.background = '#ffffff';
-      tempContainer.innerHTML = `<style>${rawCss}\n.no-print{display:none!important;}\n.document-page{margin:0!important;box-shadow:none!important;}</style>${parsedDoc.body ? parsedDoc.body.innerHTML : htmlContent}`;
-      document.body.appendChild(tempContainer);
-
-      try {
-        const opt = {
-          margin: 0,
-          filename: fileName,
-          image: { type: 'jpeg' as const, quality: 0.98 },
-          html2canvas: { scale: 2, useCORS: true, letterRendering: true },
-          jsPDF: { unit: 'mm', format: 'a4' as const, orientation: 'portrait' as const },
-        };
-        await html2pdf().set(opt).from(tempContainer).save();
-      } finally {
-        if (document.body.contains(tempContainer)) {
-          document.body.removeChild(tempContainer);
-        }
-      }
-    } finally {
-      setIsGeneratingPdf(false);
-    }
-  };
-
-  const handlePrintDocument = (tugas: SuratTugasDinas, mode: SPTPrintMode) => {
-    const html = generateSuratTugasFullHtml(tugas, identitasSekolah, mode);
-
-    try {
-      const parser = new DOMParser();
-      const parsedDoc = parser.parseFromString(html, 'text/html');
-      const extractedCss = Array.from(parsedDoc.querySelectorAll('style'))
-        .map((s) => s.textContent || '')
-        .join('\n')
-        .replace(/\bbody\b/g, '#simtu-print-portal');
-      const bodyHtml = parsedDoc.body ? parsedDoc.body.innerHTML : html;
-
-      const oldPortal = document.getElementById('simtu-print-portal');
-      if (oldPortal) oldPortal.remove();
-      const oldStyle = document.getElementById('simtu-print-portal-style');
-      if (oldStyle) oldStyle.remove();
-
-      const styleEl = document.createElement('style');
-      styleEl.id = 'simtu-print-portal-style';
-      styleEl.textContent = `
-        @media screen {
-          #simtu-print-portal {
-            display: none !important;
-          }
-        }
-        ${extractedCss}
-        @media print {
-          @page {
-            size: A4 portrait !important;
-            margin: 20mm 20mm 20mm 25mm !important;
-          }
-          html, body {
-            margin: 0 !important;
-            padding: 0 !important;
-            background: #ffffff !important;
-            color: #000000 !important;
-            height: auto !important;
-            overflow: visible !important;
-          }
-          #root {
-            display: none !important;
-          }
-          #simtu-print-portal {
-            display: block !important;
-            position: static !important;
-            width: 100% !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            background: #ffffff !important;
-            color: #000000 !important;
-            overflow: visible !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-          }
-          #simtu-print-portal .no-print {
-            display: none !important;
-          }
-        }
-      `;
-
-      const portalEl = document.createElement('div');
-      portalEl.id = 'simtu-print-portal';
-      portalEl.innerHTML = bodyHtml;
-
-      document.head.appendChild(styleEl);
-      document.body.appendChild(portalEl);
-
-      let printEventFired = false;
-      let cleanedUp = false;
-      const onBeforePrint = () => {
-        printEventFired = true;
-      };
-      const cleanup = () => {
-        if (cleanedUp) return;
-        cleanedUp = true;
-        window.removeEventListener('beforeprint', onBeforePrint);
-        window.removeEventListener('afterprint', cleanup);
-        const p = document.getElementById('simtu-print-portal');
-        if (p) p.remove();
-        const s = document.getElementById('simtu-print-portal-style');
-        if (s) s.remove();
-      };
-
-      window.addEventListener('beforeprint', onBeforePrint);
-      window.addEventListener('afterprint', cleanup);
-
-      const startTime = Date.now();
-      window.focus();
-      window.print();
-      const elapsed = Date.now() - startTime;
-
-      if (!printEventFired && elapsed < 100) {
-        setTimeout(() => {
-          if (!printEventFired) {
-            cleanup();
-            setSyncFeedback({
-              message: 'Dialog cetak browser diblokir oleh sandbox preview — dokumen PDF otomatis diunduh agar siap dicetak.',
-              type: 'info',
-            });
-            handleDownloadPdf(tugas, mode).catch((pdfErr) => {
-              console.warn('PDF fallback error:', pdfErr);
-            });
-          } else {
-            setTimeout(cleanup, 60000);
-          }
-        }, 600);
-      } else {
-        setTimeout(cleanup, 60000);
-      }
-    } catch (e: any) {
-      console.warn('Print portal error, downloading PDF fallback:', e);
-      handleDownloadPdf(tugas, mode).catch((pdfErr) => {
-        console.warn('PDF fallback error:', pdfErr);
-      });
-    }
-  };
-
   const filtered = tugasList.filter(
     (t) =>
       (t.noSuratTugas || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -1029,6 +918,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
 
   return (
     <div className="space-y-5">
+      <div className="space-y-5 spt-screen-only">
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
@@ -1328,7 +1218,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                           type="button"
                           onClick={() => {
                             setSelectedForPrint(item);
-                            setPrintMode('spt_only');
+                            setPrintType('SPT');
                             setSaveSuccessMsg(null);
                           }}
                           className="bg-sky-600 hover:bg-sky-700 text-white px-2.5 py-1.5 rounded-md font-bold text-[11px] flex items-center gap-1 shadow-sm transition cursor-pointer"
@@ -1343,7 +1233,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                           type="button"
                           onClick={() => {
                             setSelectedForPrint(item);
-                            setPrintMode('sppd_only');
+                            setPrintType('SPPD');
                             setSaveSuccessMsg(null);
                           }}
                           className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2 py-1.5 rounded-md font-semibold text-[11px] flex items-center gap-1 transition cursor-pointer"
@@ -1380,10 +1270,11 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
           </table>
         </div>
       </div>
+      </div>
 
       {/* MODAL: Input / Edit Surat Tugas */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 overflow-y-auto">
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 overflow-y-auto no-print">
           <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto light-scrollbar">
             <div className="flex justify-between items-center pb-3 border-b border-slate-100 mb-4">
               <h3 className="font-extrabold text-base text-slate-900 uppercase flex items-center gap-2">
@@ -1696,10 +1587,11 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
         </div>
       )}
 
-      {/* MODAL: Official Google Drive Template Preview & Print */}
-      {selectedForPrint && (
-        <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
-          <div className="bg-slate-100 rounded-2xl max-w-4xl w-full p-4 sm:p-6 shadow-2xl border border-slate-200 max-h-[94vh] overflow-y-auto light-scrollbar">
+      {/* MODAL: Official Google Drive Template Preview & Print (Mounted in body portal for clean @media print) */}
+      {selectedForPrint && typeof document !== 'undefined' && createPortal(
+        <div id="spt-print-portal">
+          <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto spt-print-modal-backdrop">
+            <div className="bg-slate-100 rounded-2xl max-w-4xl w-full p-4 sm:p-6 shadow-2xl border border-slate-200 max-h-[94vh] overflow-y-auto light-scrollbar spt-print-modal-card">
             {/* Top Toolbar (No-Print) */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-300 mb-4 no-print bg-white p-3.5 rounded-xl shadow-sm">
               <div>
@@ -1713,17 +1605,21 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 font-mono mt-0.5">
-                  Nomor: {selectedForPrint.noSuratTugas}
+                  Nomor: {selectedForPrint.noSuratTugas || selectedForPrint.noSPPD || '-'}
                 </p>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 no-print">
                 {/* Print Mode Switch */}
                 <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200">
                   <button
-                    onClick={() => setPrintMode('spt_only')}
-                    className={`px-2.5 py-1 text-xs font-bold rounded-md transition ${
-                      printMode === 'spt_only'
+                    type="button"
+                    onClick={() => {
+                      setPrintType('SPT');
+                      setPrintFallbackUrl(null);
+                    }}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-md transition cursor-pointer ${
+                      printType === 'SPT'
                         ? 'bg-sky-600 text-white shadow-sm'
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
@@ -1731,9 +1627,13 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                     SPT Saja
                   </button>
                   <button
-                    onClick={() => setPrintMode('sppd_only')}
-                    className={`px-2.5 py-1 text-xs font-bold rounded-md transition ${
-                      printMode === 'sppd_only'
+                    type="button"
+                    onClick={() => {
+                      setPrintType('SPPD');
+                      setPrintFallbackUrl(null);
+                    }}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-md transition cursor-pointer ${
+                      printType === 'SPPD'
                         ? 'bg-sky-600 text-white shadow-sm'
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
@@ -1741,9 +1641,13 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                     SPPD (Hal 1 &amp; 2)
                   </button>
                   <button
-                    onClick={() => setPrintMode('all')}
-                    className={`px-2.5 py-1 text-xs font-bold rounded-md transition ${
-                      printMode === 'all'
+                    type="button"
+                    onClick={() => {
+                      setPrintType('LENGKAP');
+                      setPrintFallbackUrl(null);
+                    }}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-md transition cursor-pointer ${
+                      printType === 'LENGKAP'
                         ? 'bg-sky-600 text-white shadow-sm'
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
@@ -1752,65 +1656,22 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                   </button>
                 </div>
 
-                {/* Print Button */}
+                {/* Native Browser Print Button */}
                 <button
                   type="button"
-                  onClick={() => handlePrintDocument(selectedForPrint, printMode)}
-                  className="bg-sky-600 hover:bg-sky-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+                  onClick={handlePrintDocument}
+                  className="bg-sky-600 hover:bg-sky-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition cursor-pointer"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>
-                    {printMode === 'spt_only'
-                      ? 'Cetak SPT'
-                      : printMode === 'sppd_only'
-                      ? 'Cetak SPPD (Hal 1 & 2)'
-                      : 'Cetak SPT + SPPD'}
-                  </span>
-                </button>
-
-                {/* Download PDF */}
-                <button
-                  type="button"
-                  onClick={() => handleDownloadPdf(selectedForPrint, printMode)}
-                  disabled={isGeneratingPdf}
-                  className="bg-rose-50 hover:bg-rose-100 disabled:opacity-50 text-rose-700 border border-rose-200 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-                  title="Unduh Dokumen Siap Cetak Format PDF"
-                >
-                  {isGeneratingPdf ? (
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Download className="w-3.5 h-3.5" />
-                  )}
-                  <span>{isGeneratingPdf ? 'Membuat PDF...' : 'PDF'}</span>
-                </button>
-
-                {/* Download Word (.doc) */}
-                <button
-                  type="button"
-                  onClick={() => downloadSuratTugasDocFile(selectedForPrint, identitasSekolah, printMode)}
-                  className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-                  title="Unduh Format Microsoft Word (.doc)"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Word (.doc)</span>
-                </button>
-
-                {/* Download HTML */}
-                <button
-                  type="button"
-                  onClick={() => downloadSuratTugasHtmlFile(selectedForPrint, identitasSekolah, printMode)}
-                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
-                  title="Unduh Berkas HTML Standar"
-                >
-                  <FileCode className="w-3.5 h-3.5" />
-                  <span>HTML</span>
+                  <span>Cetak Dokumen</span>
                 </button>
 
                 {/* Save to Google Drive */}
                 <button
+                  type="button"
                   onClick={() => handleSaveToDrive(selectedForPrint)}
                   disabled={isSavingToDrive}
-                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition"
+                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition cursor-pointer"
                 >
                   {isSavingToDrive ? (
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -1821,16 +1682,41 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
                 </button>
 
                 <button
-                  onClick={() => setSelectedForPrint(null)}
-                  className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg"
+                  type="button"
+                  onClick={() => {
+                    setSelectedForPrint(null);
+                    setPrintFallbackUrl(null);
+                  }}
+                  className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
+                  title="Tutup Pratinjau"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
             </div>
 
+            {printFallbackUrl && (
+              <div className="mb-4 bg-amber-50 border border-amber-300 text-amber-950 px-4 py-3 rounded-xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 no-print">
+                <div className="flex items-start sm:items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5 sm:mt-0" />
+                  <span>
+                    Browser membatasi dialog cetak langsung di dalam frame pratinjau. Klik tombol di kanan untuk membuka dokumen siap cetak di tab baru (atau tekan Ctrl+P).
+                  </span>
+                </div>
+                <a
+                  href={printFallbackUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3.5 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5 shrink-0 shadow-sm transition"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Buka &amp; Cetak di Tab Baru</span>
+                </a>
+              </div>
+            )}
+
             {saveSuccessMsg && (
-              <div className="mb-4 bg-emerald-50 border border-emerald-300 text-emerald-800 px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-between">
+              <div className="mb-4 bg-emerald-50 border border-emerald-300 text-emerald-800 px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-between no-print">
                 <span className="flex items-center gap-1.5">
                   <Check className="w-4 h-4 text-emerald-600" />
                   {saveSuccessMsg}
@@ -1849,11 +1735,11 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
               </div>
             )}
 
-            {/* Document Frame / Canvas (Faithful to Google Drive TATA USAHA/SURAT "Surat Tugas" & "SPPD") */}
-            <div className="space-y-6 max-w-3xl mx-auto">
+            {/* Document Frame / Canvas (#print-area for @media print) */}
+            <div id="print-area" className="space-y-6 max-w-3xl mx-auto">
               {/* PAGE 1: SURAT PERINTAH TUGAS (SPT) */}
-              {(printMode === 'spt_only' || printMode === 'all') && (
-                <div className="bg-white p-8 sm:p-12 rounded-xl shadow-lg border border-slate-300 text-slate-900 font-serif leading-relaxed">
+              {(printType === 'SPT' || printType === 'LENGKAP') && (
+                <div className="bg-white p-8 sm:p-12 rounded-xl shadow-lg border border-slate-300 text-slate-900 font-serif leading-relaxed spt-page-sheet">
                   {/* Kop Surat Resmi Ganda */}
                   <div className="flex items-center justify-between border-b-2 border-black pb-2 mb-1">
                     <img
@@ -2025,10 +1911,10 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
               )}
 
               {/* PAGE 2: SPPD HALAMAN 1 (LEMBAR DEPAN / MUKA) */}
-              {(printMode === 'sppd_only' || printMode === 'all') && (
-                <div className="bg-white p-8 sm:p-12 rounded-xl shadow-lg border border-slate-300 text-slate-900 font-serif leading-relaxed">
-                  {/* Badge Identifikasi Sheet Google Drive */}
-                  <div className="bg-sky-50 border border-sky-200 text-sky-900 text-[10px] font-bold px-3 py-1 rounded-md mb-4 flex items-center justify-between font-sans">
+              {(printType === 'SPPD' || printType === 'LENGKAP') && (
+                <div className={`bg-white p-8 sm:p-12 rounded-xl shadow-lg border border-slate-300 text-slate-900 font-serif leading-relaxed spt-page-sheet ${printType === 'LENGKAP' ? 'spt-page-break' : ''}`}>
+                  {/* Badge Identifikasi Sheet Google Drive (Screen Only) */}
+                  <div className="bg-sky-50 border border-sky-200 text-sky-900 text-[10px] font-bold px-3 py-1 rounded-md mb-4 flex items-center justify-between font-sans no-print">
                     <span>Google Drive: Folder TATA USAHA/SURAT/SURAT KELUAR &gt; File &quot;SPPD&quot;</span>
                     <span className="bg-sky-600 text-white px-2 py-0.5 rounded">Sheet: SPPD HAL-1 (Lembar Depan)</span>
                   </div>
@@ -2182,10 +2068,10 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
               )}
 
               {/* PAGE 3: SPPD HALAMAN 2 (LEMBAR BELAKANG / VISUM & CATATAN PENGESAHAN) */}
-              {(printMode === 'sppd_only' || printMode === 'all') && (
-                <div className="bg-white p-8 sm:p-12 rounded-xl shadow-lg border border-slate-300 text-slate-900 font-serif leading-relaxed">
-                  {/* Badge Identifikasi Sheet Google Drive */}
-                  <div className="bg-indigo-50 border border-indigo-200 text-indigo-900 text-[10px] font-bold px-3 py-1 rounded-md mb-4 flex items-center justify-between font-sans">
+              {(printType === 'SPPD' || printType === 'LENGKAP') && (
+                <div className="bg-white p-8 sm:p-12 rounded-xl shadow-lg border border-slate-300 text-slate-900 font-serif leading-relaxed spt-page-sheet spt-page-break">
+                  {/* Badge Identifikasi Sheet Google Drive (Screen Only) */}
+                  <div className="bg-indigo-50 border border-indigo-200 text-indigo-900 text-[10px] font-bold px-3 py-1 rounded-md mb-4 flex items-center justify-between font-sans no-print">
                     <span>Google Drive: Folder TATA USAHA/SURAT/SURAT KELUAR &gt; File &quot;SPPD&quot;</span>
                     <span className="bg-indigo-600 text-white px-2 py-0.5 rounded">Sheet: SPPD HAL-2 (Lembar Belakang / Visum)</span>
                   </div>
@@ -2260,11 +2146,13 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
             </div>
           </div>
         </div>
+        </div>,
+        document.body
       )}
 
       {/* MODAL: Google Drive Folder TATA USAHA/SURAT Inspection */}
       {isDriveTemplateModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 overflow-y-auto">
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 overflow-y-auto no-print">
           <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto light-scrollbar">
             <div className="flex justify-between items-center pb-3 border-b border-slate-100 mb-4">
               <h3 className="font-extrabold text-sm uppercase text-slate-900 flex items-center gap-2">
@@ -2435,7 +2323,7 @@ export const SuratTugasDinasModule: React.FC<SuratTugasDinasModuleProps> = ({
 
       {/* MODAL: Konfirmasi Hapus Surat Tugas */}
       {suratToDelete && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 no-print">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in duration-200">
             <div className="flex items-start gap-4">
               <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">

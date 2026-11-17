@@ -69,16 +69,17 @@ provider.setCustomParameters({
 
 // Flag to indicate if we are in the middle of a sign-in flow.
 let isSigningIn = false;
-let firebaseApiKeyExpired = false;
+let firebaseAuthUnavailable = false;
 // Storage keys versioned to discard stale tokens from previous OAuth project configurations
 const STORAGE_TOKEN_KEY = 'SIMTU_GDRIVE_ACCESS_TOKEN_V2';
 const STORAGE_USER_KEY = 'SIMTU_GDRIVE_USER_DATA_V2';
 const STORAGE_EXPIRY_KEY = 'SIMTU_GDRIVE_EXPIRY_V2';
 
-// Proactively detect if Firebase Web API Key is expired so click handler can route directly to GIS OAuth without losing user gesture
-const checkFirebaseApiKeyStatus = async () => {
+// Proactively detect if Firebase Web API Key is expired or blocked on this referrer/domain
+// so the click handler can route directly to GIS OAuth without losing the user gesture.
+const checkFirebaseAuthStatus = async () => {
   if (!firebaseConfig?.apiKey) {
-    firebaseApiKeyExpired = true;
+    firebaseAuthUnavailable = true;
     return;
   }
   try {
@@ -86,15 +87,24 @@ const checkFirebaseApiKeyStatus = async () => {
       `https://identitytoolkit.googleapis.com/v1/projects?key=${encodeURIComponent(firebaseConfig.apiKey)}`
     );
     if (!res.ok) {
+      if (res.status === 400 || res.status === 403) {
+        firebaseAuthUnavailable = true;
+        return;
+      }
       const data = await res.json().catch(() => ({}));
-      const msg = String(data?.error?.message || '');
-      const reason = String(data?.error?.details?.[0]?.reason || '');
+      const msg = String(data?.error?.message || '').toLowerCase();
+      const reason = String(data?.error?.details?.[0]?.reason || '').toUpperCase();
       if (
-        msg.toLowerCase().includes('api key expired') ||
+        msg.includes('api key expired') ||
+        msg.includes('api key not valid') ||
+        msg.includes('api_key_invalid') ||
+        msg.includes('requests from referer') ||
+        msg.includes('are blocked') ||
         reason === 'API_KEY_INVALID' ||
-        msg.toLowerCase().includes('api_key_invalid')
+        reason === 'API_KEY_HTTP_REFERRER_BLOCKED' ||
+        reason === 'API_KEY_SERVICE_BLOCKED'
       ) {
-        firebaseApiKeyExpired = true;
+        firebaseAuthUnavailable = true;
       }
     }
   } catch {
@@ -103,7 +113,7 @@ const checkFirebaseApiKeyStatus = async () => {
 };
 
 if (typeof window !== 'undefined') {
-  checkFirebaseApiKeyStatus();
+  checkFirebaseAuthStatus();
 }
 
 const loadGisScript = (): Promise<void> => {
@@ -216,7 +226,7 @@ const gisGoogleSignIn = async (loginHint?: string): Promise<{ user: any; accessT
         },
       });
 
-      tokenClient.requestAccessToken({ prompt: loginHint ? '' : 'select_account' });
+      tokenClient.requestAccessToken({ prompt: 'select_account' });
     } catch (e: any) {
       reject(e);
     }
@@ -435,8 +445,8 @@ export const googleSignIn = async (): Promise<{ user: User | any; accessToken: s
   try {
     isSigningIn = true;
 
-    // If Firebase API key is known expired, route directly to GIS OAuth synchronously in click stack
-    if (firebaseApiKeyExpired) {
+    // If Firebase Auth API key is known to be expired or blocked on this referrer, route directly to GIS OAuth synchronously in click stack
+    if (firebaseAuthUnavailable) {
       return await gisGoogleSignIn(storedUser?.email);
     }
 
@@ -459,30 +469,10 @@ export const googleSignIn = async (): Promise<{ user: User | any; accessToken: s
     }
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
-    const errorCode = error?.code || '';
-    const errorMsg = error?.message || '';
+    const errorCode = String(error?.code || '').toLowerCase();
+    const errorMsg = String(error?.message || '').toLowerCase();
 
-    // Handle expired/invalid Firebase API key by falling back to GIS OAuth using oAuthClientId
-    if (
-      errorCode.includes('api-key-expired') ||
-      errorCode.includes('invalid-api-key') ||
-      errorMsg.includes('api-key-expired') ||
-      errorMsg.includes('API key expired')
-    ) {
-      firebaseApiKeyExpired = true;
-      console.info('Firebase Auth API key expired; switching to Google Identity Services OAuth.');
-      try {
-        return await gisGoogleSignIn(storedUser?.email);
-      } catch (gisErr: any) {
-        console.warn('GIS OAuth fallback warning:', gisErr?.message || gisErr);
-        throw new Error(
-          gisErr?.message ||
-            'API Key Firebase kedaluwarsa. Silakan klik "Hubungkan Google" sekali lagi untuk masuk melalui Google OAuth.'
-        );
-      }
-    }
-
-    // Handle user closing popup or canceling sign-in cleanly without throwing error
+    // Handle user closing popup cleanly without falling back or throwing error
     if (
       errorCode === 'auth/popup-closed-by-user' ||
       errorCode === 'auth/cancelled-popup-request' ||
@@ -496,6 +486,35 @@ export const googleSignIn = async (): Promise<{ user: User | any; accessToken: s
     if (errorCode === 'auth/popup-blocked') {
       console.warn('Google Sign-In popup diblokir oleh browser.');
       throw new Error('Popup login diblokir oleh peramban. Harap izinkan pop-up untuk situs ini.');
+    }
+
+    // Handle ANY Firebase Auth configuration/key/referrer/domain error by falling back to GIS OAuth using oAuthClientId
+    if (
+      errorCode.includes('api-key-expired') ||
+      errorCode.includes('invalid-api-key') ||
+      errorCode.includes('requests-from-referer') ||
+      errorCode.includes('unauthorized-domain') ||
+      errorCode.includes('operation-not-allowed') ||
+      errorCode.includes('app-not-authorized') ||
+      errorCode.includes('internal-error') ||
+      errorCode.includes('network-request-failed') ||
+      errorMsg.includes('are-blocked') ||
+      errorMsg.includes('are blocked') ||
+      errorMsg.includes('api-key-expired') ||
+      errorMsg.includes('api key expired') ||
+      errorMsg.includes('requests-from-referer')
+    ) {
+      firebaseAuthUnavailable = true;
+      console.info('Firebase Auth tidak tersedia pada domain/API key ini; beralih ke Google Identity Services OAuth.');
+      try {
+        return await gisGoogleSignIn(storedUser?.email);
+      } catch (gisErr: any) {
+        console.warn('GIS OAuth fallback warning:', gisErr?.message || gisErr);
+        throw new Error(
+          gisErr?.message ||
+            'Autentikasi Firebase dibatasi. Silakan klik "Hubungkan Google" sekali lagi untuk masuk melalui Google OAuth.'
+        );
+      }
     }
 
     console.warn('Google Sign In error:', error);

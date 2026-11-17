@@ -37,6 +37,11 @@
   background: #94a3b8;
 }
 
+@page spt-portrait {
+  size: A4 portrait;
+  margin: 16mm 18mm 16mm 22mm;
+}
+
 /* Print Styling */
 @media print {
   @page {
@@ -77,5 +82,73 @@
   tfoot {
     display: table-footer-group;
   }
-}
 
+  /* Isolated Print Area for Surat Tugas (SPT) & SPPD */
+  html:has(#spt-print-portal),
+  body:has(#spt-print-portal),
+  body.spt-printing {
+    background: #ffffff !important;
+    color: #000000 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  body:has(#spt-print-portal) #root,
+  body.spt-printing #root {
+    display: none !important;
+  }
+  body:has(#spt-print-portal) .no-print,
+  body.spt-printing .no-print,
+  body:has(#spt-print-portal) .spt-screen-only,
+  body.spt-printing .spt-screen-only {
+    display: none !important;
+  }
+  #spt-print-portal,
+  #spt-print-portal .spt-print-modal-backdrop,
+  #spt-print-portal .spt-print-modal-card {
+    display: block !important;
+    position: static !important;
+    inset: auto !important;
+    width: 100% !important;
+    max-width: none !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  #spt-print-portal #print-area {
+    page: spt-portrait;
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+  #spt-print-portal #print-area .spt-page-sheet {
+    display: block !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+    margin-block: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    width: 100% !important;
+  }
+  #spt-print-portal #print-area .spt-page-break {
+    page-break-before: always !important;
+    break-before: page !important;
+  }
+}
